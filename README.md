@@ -1,8 +1,8 @@
 # GTZAN_music_genre_classification
 Music Genre Classification project for Jedha Demodays with Sandra, Cyril, John and Adrien.
 
-Lien du dataset : [https://discord.com/channels/808729710216872010/1511294571533832322/1511340882740379879](https://www.kaggle.com/datasets/andradaolteanu/gtzan-dataset-music-genre-classification/data)
-Lien de l'architecture : https://excalidraw.com/#json=FsKQX4mxm74kp6hbglEDG,SABUtoTNIVD_Gp8jmtJFPw
+<p>Lien du dataset : [https://discord.com/channels/808729710216872010/1511294571533832322/1511340882740379879](https://www.kaggle.com/datasets/andradaolteanu/gtzan-dataset-music-genre-classification/data)</p>
+<p></p>Lien de l'architecture : https://excalidraw.com/#json=FsKQX4mxm74kp6hbglEDG,SABUtoTNIVD_Gp8jmtJFPw</p>
 
 ### 1. Métadonnées et durée
 **length** : Le nombre total d'échantillons (samples) dans le fichier audio.
