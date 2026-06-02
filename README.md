@@ -2,7 +2,8 @@
 Music Genre Classification project for Jedha Demodays with Sandra, Cyril, John and Adrien.
 
 <p>Lien du dataset : https://www.kaggle.com/datasets/andradaolteanu/gtzan-dataset-music-genre-classification/data</p>
-<p></p>Lien de l'architecture : https://excalidraw.com/#json=FsKQX4mxm74kp6hbglEDG,SABUtoTNIVD_Gp8jmtJFPw</p>
+<p>Lien de l'architecture : https://excalidraw.com/#json=AwdlGt14SUMsoFwYPisCY,k5MgvTOaVuygl5AQTSUjgg</p>
+<p>Lien de la revue de classification de musique : https://larevueia.fr/machine-learning-pour-la-classification-automatique-de-musiques-avec-python/</p>
 
 ### 1. Métadonnées et durée
 **length** : Le nombre total d'échantillons (samples) dans le fichier audio.
