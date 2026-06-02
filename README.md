@@ -1,39 +1,52 @@
 # GTZAN_music_genre_classification
 Music Genre Classification projet for Jedha Demodays Project with Sandra, Cyril, John and Adrien.
 
-## 1. Caractéristiques Temporelles (Temps et Amplitude)
-Ces caractéristiques sont analysées directement à partir de la forme d'onde du signal.
-### length : Représente la durée du segment audio, généralement exprimée en secondes ou en nombre d'échantillons ;
-### rms_mean / rms_var : Le Root Mean Square (valeur efficace) est une mesure de la puissance ou du volume sonore
-Il décrit l'évolution temporelle de l'énergie et permet de percevoir les variations d'amplitude dans la forme d'onde.
-### zero_crossing_rate_mean / zero_crossing_rate_var : Le taux de passage par zéro (ZCR) indique la fréquence à laquelle le signal change de signe (passe du positif au négatif et vice-versa).
-Une valeur élevée de ZCR est souvent associée à un bruit ou à des sons non périodiques (comme les sons percussifs), tandis qu'une valeur faible indique un signal plus périodique et tonal
+Lien du dataset : https://discord.com/channels/808729710216872010/1511294571533832322/1511340882740379879
+Lien de l'architecture : https://excalidraw.com/#json=FsKQX4mxm74kp6hbglEDG,SABUtoTNIVD_Gp8jmtJFPw
 
-2. Caractéristiques Spectrales (Fréquences)
-Ces caractéristiques sont obtenues en convertissant le signal du domaine temporel vers le domaine fréquentiel (généralement via une transformée de Fourier - STFT)
+1. Métadonnées et durée
+length : Le nombre total d'échantillons (samples) dans le fichier audio
+. C'est une mesure brute de la durée (30 secondes à 22050 Hz donnent environ 661 500 échantillons)
 .
-spectral_centroid_mean / spectral_centroid_var : Indique le "centre de masse" du spectre de fréquences
-. Il est étroitement lié à la brillance perçue d'un son : plus le centroïde est élevé, plus le son est perçu comme "clair" ou "brillant"
+2. Caractéristiques de "Chroma" (Contenu Harmonique)
+chroma_stft_mean / chroma_stft_var : Ces valeurs calculent la moyenne et la variance d'un chromagramme obtenu par transformée de Fourier à court terme (STFT)
+. Elles représentent l'intensité des 12 demi-tons de l'octave musicale. C'est l'indicateur principal pour identifier la tonalité ou la progression d'accords
 .
-spectral_bandwidth_mean / spectral_bandwidth_var : Représente la plage de fréquences couverte par le signal, pondérée par son spectre
+3. Énergie et Volume
+rms_mean / rms_var : La valeur efficace (Root Mean Square) est la mesure directe de la puissance ou du volume sonore
+. La moyenne indique le volume global, tandis que la variance indique si le morceau a une dynamique stable ou s'il y a de grands écarts de volume
 .
-rolloff_mean / rolloff_var : La fréquence de coupure spectrale (spectral roll-off) est la fréquence en dessous de laquelle se trouve un certain pourcentage (généralement 85 % ou 95 %) de l'énergie spectrale totale
-. Cela aide à distinguer les sons avec beaucoup de hautes fréquences de ceux qui sont plus sourds.
-3. Caractéristiques de Timbre et d'Harmonie
-chroma_stft_mean / chroma_stft_var : Les caractéristiques de chroma projettent l'ensemble du spectre de fréquences sur 12 bacs représentant les 12 demi-tons de l'octave musicale
-. C'est un outil puissant pour analyser le contenu harmonique et la progression des accords d'un morceau
+4. Forme et Brillance du Spectre
+spectral_centroid_mean / spectral_centroid_var : Indique le "centre de gravité" du spectre
+. Une valeur élevée correspond à un son brillant (beaucoup de hautes fréquences), tandis qu'une valeur faible indique un son plus sourd/sombre
 .
-harmony_mean / harmony_var et perceptr_mean / perceptr_var : Ces colonnes proviennent probablement d'une technique de séparation source-filtre (HPSS - Harmonic-Percussive Source Separation)
+spectral_bandwidth_mean / spectral_bandwidth_var : Mesure l'étendue de la plage de fréquences occupée par le signal
 .
-harmony représente la composante tonale/harmonique du son (les notes tenues)
+rolloff_mean / rolloff_var : La fréquence de coupure spectrale est le seuil sous lequel se trouve un certain pourcentage (généralement 85 % ou 95 %) de l'énergie
+. Elle permet de distinguer les sons riches en hautes fréquences des autres
 .
-perceptr (souvent pour percussive) représente la composante transitoire/percussive (les attaques brusques comme les coups de batterie)
+5. Rugosité et Bruit
+zero_crossing_rate_mean / zero_crossing_rate_var : Le taux de passage par zéro indique la fréquence à laquelle le signal change de signe
+. Des valeurs élevées sont caractéristiques des bruits blancs ou des sons percussifs
 .
-mfcc1_mean à mfcc20_var : Les coefficients cepstraux sur l'échelle de Mel (Mel-Frequency Cepstral Coefficients) sont des représentations compressées de l'enveloppe spectrale
-. Ils imitent la manière dont le système auditif humain perçoit les fréquences (échelle de Mel non linéaire)
-. Les premiers coefficients (les ordres inférieurs) capturent les caractéristiques principales de l'instrument ou de la voix, tandis que les suivants apportent des détails spectraux plus fins
+6. Séparation HPSS (Harmonique-Percussive)
+Ces colonnes proviennent de la technique Harmonic-Percussive Source Separation (HPSS) utilisée par Librosa
+ :
+harmony_mean / harmony_var : Représente la composante tonale du son (les notes tenues et mélodiques)
 .
-4. Rythme
-tempo : Indique la vitesse de la pulsation de la musique, mesurée en battements par minute (BPM)
-. Il est extrait en analysant la périodicité des événements de l'audio
+perceptr_mean / perceptr_var : Souvent noté pour percussive, il représente la composante transitoire (les attaques, les percussions, les bruits brusques)
+.
+7. Rythme
+tempo : L'estimation de la vitesse de la musique en battements par minute (BPM)
+.
+8. Coefficients Cepstraux (MFCC)
+mfcc1_mean à mfcc20_var : Les 20 coefficients cepstraux sur l'échelle de Mel sont les caractéristiques les plus importantes pour la classification
+.
+Les premiers coefficients (ordres inférieurs) représentent la forme globale de l'enveloppe spectrale et l'identité de l'instrument ou de la voix
+.
+Les coefficients supérieurs capturent des détails spectraux plus fins
+.
+Le dataset fournit la moyenne et la variance pour chacun de ces 20 coefficients sur toute la durée du segment
+.
+Pourquoi Mean et Var ? Pour chaque fenêtre de temps (frame), une valeur est extraite. Comme le morceau dure 30 secondes, le dataset résume ces milliers de valeurs en deux chiffres : la moyenne (l'état général) et la variance (comment cette caractéristique change au cours du temps)
 .
