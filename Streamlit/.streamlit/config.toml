@@ -1,0 +1,15 @@
+# Within your config.toml file
+[theme]
+base="dark"
+primaryColor="#HEXADECIMAL_COLOR"
+backgroundColor="#HEXADECIMAL_COLOR"
+secondaryBackgroundColor="#HEXADECIMAL_COLOR"
+textColor="#HEXADECIMAL_COLOR"
+font="sans serif"
+
+[browser]
+serverAddress = '0.0.0.0'
+
+[global]
+dataFrameSerialization = "legacy"
+
