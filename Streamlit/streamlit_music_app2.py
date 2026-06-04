@@ -31,7 +31,7 @@ from pathlib import Path
 
 # st.write("CWD :", os.getcwd())
 # Chemin absolu basé sur l'emplacement du script (indépendant du CWD)
-BASE_DIR     = Path(__file__).resolve().parent.parent
+BASE_DIR     = Path(__file__).resolve().parent.parent.parent
 GENERAL_PATH = BASE_DIR / "gtzan-dataset-music-genre-classification" / "Data"
 GENRES_PATH  = GENERAL_PATH / "genres_original"
 PCA_PATH     = GENERAL_PATH / "PCA"
@@ -110,22 +110,85 @@ def preprocess_signal(y, sr) -> tuple:
 
 
 def compute_features(y, sr) -> np.ndarray:
-    """Calcule un vecteur de features (MFCCs, chroma, spectral centroid, etc.)."""
-    mfcc   = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
+    """Calcule un vecteur de features (MFCCs, chroma, spectral centroid, etc.).
+       TO update"""
+    features = []
+    column_names = []
+    features.append('user.file')
+    column_names.append('filename')
+    
+    length = len(y)
+    features.append(length)
+    column_names.append('length')
+    
+    
     chroma = librosa.feature.chroma_stft(y=y, sr=sr)
-    sc     = librosa.feature.spectral_centroid(y=y, sr=sr)
-    sb     = librosa.feature.spectral_bandwidth(y=y, sr=sr)
-    zcr    = librosa.feature.zero_crossing_rate(y)
-    rmse   = librosa.feature.rms(y=y)
-    feats  = np.hstack([
-        np.mean(mfcc, axis=1), np.std(mfcc, axis=1),
-        np.mean(chroma, axis=1),
-        np.mean(sc), np.std(sc),
-        np.mean(sb), np.std(sb),
-        np.mean(zcr), np.std(zcr),
-        np.mean(rmse), np.std(rmse),
-    ])
-    return feats
+    rms   = librosa.feature.rms(y=y)
+    spectral_centroid= librosa.feature.spectral_centroid(y=y, sr=sr)
+    spectral_bandwidth= librosa.feature.spectral_bandwidth(y=y, sr=sr)
+    rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)[0]
+    zero_crossing_rate= librosa.feature.zero_crossing_rate(y)
+    harmony, perceptr = librosa.effects.hpss(y)
+    tempo, _ = librosa.beat.beat_track(y=y, sr = sr)
+    
+    mfccs   = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
+    # for x in mfccs:
+        
+    #     features.append(np.mean(x))
+    
+    feature_dict = {
+    'chroma': chroma,
+    'rms': rms,
+    'spectral_centroid':spectral_centroid,
+    'spectral_bandwidth':spectral_bandwidth,
+    'rolloff':rolloff,
+    'zero_crossing_rate':zero_crossing_rate,
+    'harmony':harmony,
+    'perceptr':perceptr,
+    'tempo':tempo,
+    }
+    # add features values and columns_names: 
+    for name, data in feature_dict.items():
+        features.extend([data.mean(), data.var()])
+        column_names.extend([f'{name}_mean', f'{name}_var'])
+        
+    # add features mfcc1 to mfcc_20 _mean and _var :
+    for idx,x in enumerate(mfccs):
+        features.extend([np.mean(x),np.var(x)])
+        column_names.extend([f"mfcc{idx+1}_mean",f"mfcc{idx+1}_var"])
+
+             
+    # add label
+    features.append('user')
+    column_names.append('label')
+    
+    
+    # columns needed : 
+    """Index(['filename', 'length', 
+    
+    'chroma_stft_mean', 'chroma_stft_var',
+    'rms_mean','rms_var', 
+    'spectral_centroid_mean', 'spectral_centroid_var',
+    'spectral_bandwidth_mean', 'spectral_bandwidth_var', 
+    'rolloff_mean','rolloff_var', 
+    'zero_crossing_rate_mean', 'zero_crossing_rate_var',
+    'harmony_mean', 'harmony_var', 'perceptr_mean', 'perceptr_var', 
+    'tempo',
+       'mfcc1_mean', 'mfcc1_var', 'mfcc2_mean', 'mfcc2_var', 
+       'mfcc3_mean','mfcc3_var', 'mfcc4_mean', 'mfcc4_var', 
+       'mfcc5_mean', 'mfcc5_var','mfcc6_mean', 'mfcc6_var', 
+       'mfcc7_mean', 'mfcc7_var', 'mfcc8_mean',
+       'mfcc8_var', 'mfcc9_mean', 'mfcc9_var', 'mfcc10_mean', 'mfcc10_var',
+       'mfcc11_mean', 'mfcc11_var', 'mfcc12_mean', 'mfcc12_var', 'mfcc13_mean',
+       'mfcc13_var', 'mfcc14_mean', 'mfcc14_var', 'mfcc15_mean', 'mfcc15_var',
+       'mfcc16_mean', 'mfcc16_var', 'mfcc17_mean', 'mfcc17_var', 'mfcc18_mean',
+       'mfcc18_var', 'mfcc19_mean', 'mfcc19_var', 'mfcc20_mean', 'mfcc20_var',
+       'label'],
+    """
+    # ONLY 'filename', 'length' at begin, and label at end will be missing
+    df_features = pd.DataFrame(columns=column_names)
+    df_features.loc[0] = features
+    return features
 
 
 def compute_melspectrogram(y, sr) -> np.ndarray:
@@ -245,6 +308,10 @@ def project_new_point(df_pca: pd.DataFrame, features: np.ndarray) -> np.ndarray:
     Projette un nouveau vecteur de features dans l'espace PCA existant.
     Retourne les coordonnées PCA (3 composantes).
     """
+    # for next update if columns are important
+    # features = df_features.iloc[0].to_numpy()
+    # column_names = df_features.columns
+    # To check : same columns as PCA matrix !! 
     pc_cols = [c for c in df_pca.columns if "principal component" in c.lower()]
     if not pc_cols:
         return np.zeros(3)
@@ -459,7 +526,7 @@ with col2:
                  disabled=(st.session_state.my_y is None)):
         with st.spinner("Appel API prédiction…"):
             y_p, sr_p = st.session_state.my_y, st.session_state.my_sr
-            feats = st.session_state.my_features
+            feats = st.session_state.my_features  # is a dataframe
             spect = compute_melspectrogram(y_p, sr_p)
             pred  = call_predict_api(model_sel, feats, spect)
             st.session_state.predicted_genre = pred
