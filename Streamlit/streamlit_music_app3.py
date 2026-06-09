@@ -74,6 +74,17 @@ N_FFT             = 2048
 HOP               = 512
 IMAGE_NX          = 432
 IMAGE_NY          = 288 
+LIST_GENRES = [
+    'blues', 
+    'classical', 
+    'country', 
+    'disco', 
+    'hiphop', 
+    'jazz', 
+    'metal', 
+    'pop', 
+    'reggae', 
+    'rock']
 
 # stocker un dico en var env : 
 # my_dict = {"key1": "value1", "key2": "value2"}
@@ -230,10 +241,10 @@ def preprocess_signal(y, sr) -> tuple:
     y_clip = y_resampled[:n_samples] if len(y_resampled) >= n_samples else np.pad(
         y_resampled, (0, n_samples - len(y_resampled))
     )
-    # Normalisation RMS
-    rms = np.sqrt(np.mean(y_clip ** 2))
-    if rms > 0:
-        y_clip = y_clip / rms
+    # # Normalisation RMS
+    # rms = np.sqrt(np.mean(y_clip ** 2))
+    # if rms > 0:
+    #     y_clip = y_clip / rms
     return y_clip, TARGET_SR
 
 
@@ -397,6 +408,13 @@ def list_mlflow_models(tracking_uri: str) -> list[str]:
     except Exception as e:
         return [f"Erreur MLflow : {e}"]
 
+def revert_pred(prediction):
+    """ revert prediction from number to genre label"""    
+    unique_labels = LIST_GENRES
+    mapping_LI = {l : unique_labels.index(l) for l in unique_labels}
+    # Creating reverse mapping
+    reverse_LI = {v : k for v, k in enumerate(mapping_LI)}
+    return reverse_LI
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS — PCA & RECOMMANDATIONS
