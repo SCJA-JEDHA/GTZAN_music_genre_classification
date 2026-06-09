@@ -126,7 +126,7 @@ def url_exists(url: str) -> bool:
 import boto3
 from botocore.exceptions import ClientError
 
- 
+@st.cache_data(show_spinner=False) 
 def s3_key_exists(bucket: str, key: str) -> bool:
     s3 = boto3.client('s3')
     try:
@@ -139,7 +139,7 @@ def s3_key_exists(bucket: str, key: str) -> bool:
             raise  # autre erreur, on la remonte
 
 
-
+@st.cache_data(show_spinner=False)
 def list_s3_subdirectories_sorted(bucket_name: str, prefix: str):
     s3 = boto3.client('s3')
     paginator = s3.get_paginator('list_objects_v2')
@@ -163,6 +163,7 @@ def list_s3_subdirectories_sorted(bucket_name: str, prefix: str):
     return genres
 
 
+@st.cache_data(show_spinner=False)
 def list_genres() -> list[str]:
     """Retourne la liste des genres (sous-répertoires de genres_original)."""
     
@@ -177,6 +178,7 @@ def list_genres() -> list[str]:
         return sorted([f.stem for f in p.glob("*.wav")])
     """
 
+@st.cache_data(show_spinner=False)
 def list_tracks(genre: str) -> list[str]:
     """Retourne la liste des fichiers .wav pour un genre donné dans S3."""
     s3 = boto3.client('s3')
@@ -197,11 +199,13 @@ def list_tracks(genre: str) -> list[str]:
     
     return sorted(tracks)
 
+@st.cache_data(show_spinner=False)
 def load_audio(path: str) -> tuple:
     """Charge un fichier audio → (y, sr) avec librosa."""
     y, sr = librosa.load(path, sr=None)
     return y, sr
 
+@st.cache_data(show_spinner=False)
 def load_audio_s3(s3_key: str) -> tuple:
     """
     Charge un fichier audio depuis S3 → (y, sr) avec librosa.
@@ -414,7 +418,7 @@ def revert_pred(prediction):
     mapping_LI = {l : unique_labels.index(l) for l in unique_labels}
     # Creating reverse mapping
     reverse_LI = {v : k for v, k in enumerate(mapping_LI)}
-    return reverse_LI
+    return reverse_LI[prediction]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS — PCA & RECOMMANDATIONS
@@ -429,6 +433,7 @@ def load_pca_df(pca_path: str) -> pd.DataFrame:
     df = pd.read_csv(candidates[0])
     return df
 
+@st.cache_data(show_spinner=False)
 def load_pca_df_s3(PCA_PREFIX: str) -> pd.DataFrame:
     """
     Charge le DataFrame PCA depuis un bucket S3 (CSV attendu).
@@ -567,7 +572,7 @@ def call_predict_api(model_name_selected: str, list_features_obj: list) -> str:
     #     "model_name": model_name_selected,
     #     "image_coords": coords_2 # [{"coord": coords} for coords in image_coords_list]  # liste d'objets ImageCoord
     # }
-    st.write(payload_f)
+    #st.write(payload_f)
 
     
     # #####
@@ -581,7 +586,7 @@ def call_predict_api(model_name_selected: str, list_features_obj: list) -> str:
         resp.raise_for_status()
         data = resp.json()
         # Adapter la clé de retour selon votre API (exemple ici : 'prediction')
-        return data["prediction"]
+        return data["prediction"][0]
     except Exception as e:
         return f"Erreur API : {e}"
 
@@ -864,7 +869,7 @@ with col2:
             spect = compute_melspectrogram(y_p, sr_p)
             list_features = [feats,spect]
             pred  = call_predict_api(model_name_selected, list_features)
-            st.session_state.predicted_genre = pred
+            st.session_state.predicted_genre = revert_pred(pred)
 
     st.markdown('<div class="section-title">🏷 Genre prédit</div>', unsafe_allow_html=True)
     st.markdown(
