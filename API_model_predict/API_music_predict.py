@@ -237,6 +237,9 @@ def list_mlflow_models(tracking_uri: str) -> list[str]:
 def get_model_uri(model_name, stage="Production"):
     return f"models:/{model_name}@{stage}"
 
+def get_model_uri_hard(model_name, stage="Production"):
+    return "models:/MGC_features_SVM_baseline/2"
+
 def detect_model_type(model_name: str) -> str:
     name = model_name.lower()
     if "cnn" in name:
@@ -323,7 +326,7 @@ async def predict_f(request: PredictionRequest_f):
 
     # Charger le modèle MLflow
     try:
-        model_uri = get_model_uri(model_name,stage=MODEL_STAGE)
+        model_uri = get_model_uri_hard(model_name,stage=MODEL_STAGE)
         model = mlflow.pyfunc.load_model(model_uri)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading model: {e}")
