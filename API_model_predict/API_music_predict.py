@@ -69,8 +69,8 @@ class NumFeatures(BaseModel):
     # list of numeric features:
     filename : str
     length : int
-    chroma_mean : Union[int, float]
-    chroma_var : Union[int, float]
+    chroma_stft_mean : Union[int, float]
+    chroma_stft_var : Union[int, float]
     rms_mean    : Union[int, float]
     rms_var : Union[int, float] 
     spectral_centroid_mean: Union[int, float]
@@ -126,7 +126,7 @@ class NumFeatures(BaseModel):
     mfcc19_var : Union[int, float]
     mfcc20_mean : Union[int, float]
     mfcc20_var : Union[int, float]
-    label : Union[int, float]
+    label : str
     
 # class image_coord 
     
@@ -304,8 +304,17 @@ async def predict_f(request: PredictionRequest_f):
     #     raise HTTPException(status_code=404, detail="Model not found")
 
     model_name = request.model_name
-    num_features = request.num_features
+    num_features_0 = request.num_features
+    
+    num_features = pd.DataFrame(num_features_0)
+    num_features = num_features.T
+    num_features.columns = num_features.iloc[0]
+    num_features = num_features.iloc[1:,:]
+    print(num_features.columns)
 
+    num_features.head()    
+    
+    print(type(num_features))
     model_type =  detect_model_type(model_name)
            
     # model_info = model_dict[request.model_key]
@@ -322,34 +331,18 @@ async def predict_f(request: PredictionRequest_f):
     # Sélectionner les features selon le type
     try:
         if model_type == "feature":
-            # # On prend la première feature dans la liste
-            # features = request.list_features.num_features  # C’est une liste de NumFeatures
-            # #features = request.list_features[0]
-            # features_df = pd.DataFrame([first_feature.dict()])
-            # cols_to_drop = ["filename", "length","label"]
-            # features_df = features_df.drop(columns=[col for col in cols_to_drop if col in features_df.columns])
-            # # X = df.drop(columns=["filename","" "label"]) : 
-            # # on enleve les colonnes 1,2 (filename,length) et la derniere colonne (label) (peut-etre)
-            # # Suppression par noms de colonnes récupérés via leur position
-            # cols_to_drop = [features.columns[0], features.columns[1], features.columns[-1]]
-            # features_modified = features.drop(columns=cols_to_drop)
-            
-            # # La prédiction attend probablement un DataFrame ou un tableau 2D
-            # # Adapter selon le modèle
-            # prediction = model.predict([features])
-            
-            #features_dicts = [feature.dict() for feature in request.list_features.num_features]
-            #features_dict = num_features
-            # Créer un DataFrame pandas avec toutes les features
-            features_df = pd.DataFrame(num_features)
-
+            print('model type =features')
+            features_df = num_features
+            features_df.head()
             # Colonnes à supprimer si présentes
             cols_to_drop = ["filename", "length","label"]
+            
             features_df = features_df.drop(columns=[col for col in cols_to_drop if col in features_df.columns])
-
+            print(features_df.head())
             # Faire la prédiction sur tout le DataFrame
+            
             prediction = model.predict(features_df)
-
+            print(f"prediction: {prediction}")
             # Retourner la liste complète des prédictions
             response = {"predictions": prediction.tolist()}
     

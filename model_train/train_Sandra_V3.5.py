@@ -46,7 +46,7 @@ if __name__ == "__main__":
     start_time = time.time()
 
     # Keep autolog basic, but log model manually
-    mlflow.sklearn.autolog()
+    mlflow.sklearn.autolog(log_models=False)
 
     # ------------------------------------------------------------------
     # Dataset: GTZAN Dataset
@@ -55,7 +55,7 @@ if __name__ == "__main__":
         "s3://music-classification-project2/music-database/gtzan-dataset-music-genre-classification/Data/features_30_sec.csv"
     )
 
-    X = df.drop(columns=["filename","length", "label"])
+    X = df.drop(columns=["filename", "label", "length"])
     y = df["label"]
 
     X_train, X_test, y_train, y_test = train_test_split(
@@ -113,13 +113,13 @@ if __name__ == "__main__":
         # MLflow 3.x: prefer `name=` instead of deprecated `artifact_path=`
         model_info = mlflow.sklearn.log_model(
             sk_model=model,
-            artifact_path="model",
+            name="model",
             registered_model_name=registered_model_name,
             signature=signature,
             input_example=input_example,
         )
 
-        model_version = client.get_latest_versions(registered_model_name)[-1].version
+        model_version = model_info.registered_model_version
         print(f"[INFO] Model logged as version {model_version}")
 
         client.set_registered_model_alias(
