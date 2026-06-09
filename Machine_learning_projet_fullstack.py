@@ -80,7 +80,7 @@ df = charger_csv_google_drive(ID_FICHIER)
 
 # Separate target variable Y from features X
 target_variable = "label"
-X = df.drop([target_variable,"filename", "length"], axis=1)
+X = df.drop([target_variable,"filename", "length",], axis=1)
 Y = df.loc[:, target_variable]
 
 # Divide dataset Train set & Test set
