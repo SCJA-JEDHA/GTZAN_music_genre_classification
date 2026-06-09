@@ -3,9 +3,7 @@ Application Streamlit - Analyse & Classification Musicale
 Prédiction de genre musical via MLflow + recommandations PCA
 """
 
-import os
 import io
-import time
 import requests
 import numpy as np
 import pandas as pd
@@ -23,12 +21,12 @@ import plotly.graph_objects as go
 import mlflow
 import mlflow.pyfunc
 import boto3
+import json
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 import os
-from pathlib import Path
 
 # st.write("CWD :", os.getcwd())
 # Chemin absolu basé sur l'emplacement du script (indépendant du CWD)
@@ -51,7 +49,8 @@ s3 = boto3.client('s3')
 DATA_URL = "https://music-classification-project2.s3.eu-west-3.amazonaws.com/music-database/"
 
 GENERAL_PATH = urljoin(DATA_URL, "gtzan-dataset-music-genre-classification/Data")
-BUCKET = 'music-classification-project2'
+BUCKET = os.getenv("AWS_BUCKET")
+#BUCKET = 'music-classification-project2'
 GENRES_PREFIX = 'music-database/gtzan-dataset-music-genre-classification/Data/genres_original/'
 
 GENRES_PATH  = urljoin(GENERAL_PATH, "genres_original")
@@ -62,8 +61,11 @@ MUSIC_DATABASE_PREFIX = "music-database/gtzan-dataset-music-genre-classification
 # GENERAL_PATH      = START_PATH / "Data"
 # GENRES_PATH       = f"{GENERAL_PATH}/genres_original"
 # PCA_PATH          = f"{GENERAL_PATH}/PCA"
-MLFLOW_URI        = "https://cyrilbrg-mlflow-music.hf.space/"   # ← à jour
-API_URL           = "http://localhost:8000/api_music_predict"  # ← à ajuster
+
+#MLFLOW_URI        = "https://cyrilbrg-mlflow-music.hf.space/"   # ← à jour
+MLFLOW_URI = os.getenv("MLFLOW_URI")
+#API_URL           = "http://localhost:8000/api_music_predict"  # ← à ajuster
+API_URL = os.getenv("API_URL")
 
 TARGET_SR         = 22050
 CLIP_DURATION     = 30       # secondes conservées après silence initial
@@ -72,6 +74,29 @@ HOP_DEFAULT       = 512
 IMAGE_NX          = 432
 IMAGE_NY          = 288 
 
+# stocker un dico en var env : 
+# my_dict = {"key1": "value1", "key2": "value2"}
+#os.environ["MY_DICT"] = json.dumps(my_dict)
+model_dict_str = os.getenv("MODEL_DICT")
+if model_dict_str:
+    MODEL_DICT = json.loads(model_dict_str)
+else:
+    MODEL_DICT = {}
+
+# Example of model dict to put in .env or in hugging param
+"""
+model_dict = {
+    "model1":{
+        "name":"MGC_features_SVM_baseline",
+        "type":"feature",
+        "model_uri":"models:/registered_model1@production"
+    },
+    "model2":{
+        "name":"toto",
+        "type":"image",
+        "model_uri":"models:/registered_model2@production"
+    }
+"""
 # st.write("GENRES_PATH existe :", Path(GENRES_PATH), Path(GENRES_PATH).exists())
 # st.write("GENRES_PATH absolu :", Path(GENRES_PATH).resolve())
 
@@ -474,7 +499,7 @@ def project_new_point(df_pca: pd.DataFrame, features: np.ndarray) -> np.ndarray:
 # HELPERS — API PRÉDICTION
 # ─────────────────────────────────────────────────────────────────────────────
 
-def call_predict_api(model_name: str, features: np.ndarray, spect: np.ndarray) -> str:
+def call_predict_api_old(model_name: str, features: np.ndarray, spect: np.ndarray) -> str:
     """Appelle l'API de prédiction et retourne le genre prédit."""
     payload = {
         "model_name": model_name,
@@ -489,6 +514,57 @@ def call_predict_api(model_name: str, features: np.ndarray, spect: np.ndarray) -
     except Exception as e:
         return f"Erreur API : {e}"
 
+def call_predict_api(model_name: str, num_features_obj: dict, image_coords_list: list) -> str:
+    """
+    Appelle l'API de prédiction et retourne la prédiction.
+
+    Args:
+        model_name (str): Nom du modèle à utiliser (clé dans model_dict).
+        num_features_obj (dict): Dictionnaire conforme à la classe NumFeatures.
+        image_coords_list (list): Liste de listes, chaque sous-liste correspond à un vecteur coord de taille IMAGE_N.
+
+    Returns:
+        str: Résultat de la prédiction ou message d'erreur.
+    """
+    payload = {
+        "model": model_name,
+        "list_features": {
+            "num_features": [num_features_obj],  # liste d'un seul élément NumFeatures
+            "image_coords": [{"coord": coords} for coords in image_coords_list]  # liste d'objets ImageCoord
+        }
+    }
+
+    try:
+        resp = requests.post(API_URL, json=payload, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        # Adapter la clé de retour selon votre API (exemple ici : 'prediction')
+        return data.get("prediction", "—")
+    except Exception as e:
+        return f"Erreur API : {e}"
+
+import requests
+
+def push_models(api_url: str, model_dict: dict) -> dict:
+    """
+    Envoie le dictionnaire model_dict à l'API via une requête POST sur /update-model.
+
+    Args:
+        api_url (str): URL de base de l'API (ex: "http://localhost:8000")
+        model_dict (dict): Dictionnaire des modèles à envoyer
+
+    Returns:
+        dict: Réponse JSON de l'API
+    """
+    url = f"{api_url}/update-model"
+    payload = {"data": model_dict}
+
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        return {"error": str(e)}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LAYOUT STREAMLIT
@@ -625,7 +701,7 @@ with col1:
 
     exist_key = s3_key_exists(BUCKET, s3_key)
     
-    if st.button("▶ Play — Base", use_container_width=True, key="btn_play_db"):
+    if st.button("▶ Play — Base", width='stretch', key="btn_play_db"):
         if s3_key and  exist_key:
             st.session_state.db_audio_bytes = audio_bytes_s3(s3_key)
             y_db, sr_db = load_audio_s3(s3_key)
@@ -658,8 +734,15 @@ with col2:
     # ── Sélection modèle MLflow ───────────────────────────────────────────────
     st.markdown('<div class="section-title">🤖 Modèle MLflow</div>', unsafe_allow_html=True)
     model_names = list_mlflow_models(mlflow_uri)
-    model_sel   = st.selectbox("Modèle", model_names, key="mlflow_model")
+    model_sel   = st.selectbox(f"Modèle : ", model_names, key="mlflow_model")
 
+    result = push_models(API_URL, MODEL_DICT)
+        if "error" in result:
+            st.error(f"Erreur lors de la mise à jour : {result['error']}")
+        else:
+            st.success("Dictionnaire mis à jour avec succès")
+            st.json(result.get("stored_data", {}))
+    
     st.markdown("---")
 
     # ── Chargement fichier utilisateur ───────────────────────────────────────
@@ -673,7 +756,7 @@ with col2:
 
     if uploaded is not None:
         raw_bytes = uploaded.read()
-        if st.button("⬆ Charger & Prétraiter", use_container_width=True, key="btn_load"):
+        if st.button("⬆ Charger & Prétraiter", width='stretch', key="btn_load"):
             with st.spinner("Prétraitement en cours…"):
                 y_raw, sr_raw = librosa.load(io.BytesIO(raw_bytes), sr=None)
                 y_proc, sr_proc = preprocess_signal(y_raw, sr_raw)
@@ -684,13 +767,13 @@ with col2:
             st.success("Signal prétraité.")
 
     if st.session_state.my_audio_bytes:
-        if st.button("▶ Play — Ma musique", use_container_width=True, key="btn_play_my"):
+        if st.button("▶ Play — Ma musique", width='stretch', key="btn_play_my"):
             pass  # audio déjà en session
         st.audio(st.session_state.my_audio_bytes)
 
     # ── Prédiction ────────────────────────────────────────────────────────────
     st.markdown("---")
-    if st.button("🔍 Prédire le genre", use_container_width=True, key="btn_predict",
+    if st.button("🔍 Prédire le genre", width='stretch', key="btn_predict",
                  disabled=(st.session_state.my_y is None)):
         with st.spinner("Appel API prédiction…"):
             y_p, sr_p = st.session_state.my_y, st.session_state.my_sr
@@ -756,7 +839,7 @@ with col3:
     )
 
     # Bouton Play recommandation
-    if st.button("▶ Play — Recommandation", use_container_width=True, key="btn_play_rec"):
+    if st.button("▶ Play — Recommandation", width='stretch', key="btn_play_rec"):
         if rec_sel and rec_sel != "(aucune recommandation disponible)" and src_genre:
             rec_path = f"{GENRES_PATH}/{src_genre}/{rec_sel}.wav"
             if Path(rec_path).exists():
@@ -872,7 +955,7 @@ with col3:
                 )
 
                 # Gestion du clic → remplacer la sélection DB
-                st.plotly_chart(fig_pca, use_container_width=True,
+                st.plotly_chart(fig_pca, width='stretch',
                                 key="pca_chart")
 
                 # Sélection manuelle via liste (workaround Streamlit/Plotly click)

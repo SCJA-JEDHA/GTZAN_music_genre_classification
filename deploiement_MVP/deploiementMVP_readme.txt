@@ -1,7 +1,7 @@
 Deploiement : 
 base de donnees NeonDB : 
-postgresql://neondb_owner:npg_vmSGU6HT3yPp@ep-hidden-cake-agdphzbl-pooler.c-2.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
-
+postgresql://neondb_owner:npg_Yl1sxanjuKq9@ep-patient-mode-a2zbzxoy-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+postgresql://neondb_owner:npg_Yl1sxanjuKq9@ep-patient-mode-a2zbzxoy-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
 credentals aux autres 
 
 bucket S3 :
@@ -9,12 +9,14 @@ bucket S3 :
 music-classification-project2
     mlflow-disc : https://music-classification-project2.s3.eu-west-3.amazonaws.com/mlflow-disc/
         URI : s3://music-classification-project2/mlflow-disc/
-        mlflow access key : AKIA5Q4LO2TJM66H25JC
+        mlflow access key : 
         voir le secret access key ds fichier
-  
+        Mlflow server URL : https://cyrilbrg-mlflow-music.hf.space/
   
     music-database : 
     URI : s3://music-classification-project2/music-database/
+    https://music-classification-project2.s3.eu-west-3.amazonaws.com/music-database/
+    
     les data sont sous : ./gtzan-dataset-music-genre-classification/Data 
     meme structure qu'en decompressant l'archive Zip
 
