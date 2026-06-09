@@ -265,7 +265,7 @@ def compute_features(y, sr) -> np.ndarray:
     #     features.append(np.mean(x))
     
     feature_dict = {
-    'chroma': chroma,
+    'chroma_stft': chroma,
     'rms': rms,
     'spectral_centroid':spectral_centroid,
     'spectral_bandwidth':spectral_bandwidth,
@@ -273,12 +273,16 @@ def compute_features(y, sr) -> np.ndarray:
     'zero_crossing_rate':zero_crossing_rate,
     'harmony':harmony,
     'perceptr':perceptr,
-    'tempo':tempo,
     }
     # add features values and columns_names: 
     for name, data in feature_dict.items():
         features.extend([data.mean(), data.var()])
         column_names.extend([f'{name}_mean', f'{name}_var'])
+    
+    tempo_val = tempo.mean()
+    features.append(tempo_val)
+    column_names.append('tempo')
+        
         
     # add features mfcc1 to mfcc_20 _mean and _var :
     for idx,x in enumerate(mfccs):
@@ -554,7 +558,7 @@ def call_predict_api(model_name_selected: str, list_features_obj: list) -> str:
     
     try:
         predict_url = API_URL+'predict_f'
-        resp = requests.post(predict_url, json=payload_f, timeout=10)
+        resp = requests.post(predict_url, json=payload_f, timeout=65)
         
         resp.raise_for_status()
         data = resp.json()
