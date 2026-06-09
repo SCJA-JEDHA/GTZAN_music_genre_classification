@@ -22,6 +22,7 @@ import mlflow
 import mlflow.pyfunc
 import boto3
 import json
+import pickle
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -44,29 +45,41 @@ import boto3
 
 load_dotenv()  # charge les variables du fichier .env
 
+### ENV   ### 
+
+#MLFLOW_URI        = "https://cyrilbrg-mlflow-music.hf.space/"   # ← à jour
+MLFLOW_URI = os.getenv("MLFLOW_URI")
+#API_URL           = "http://localhost:8000/api_music_predict"  # ← à ajuster
+API_URL = os.getenv("API_URL")
+API_MODEL_CNN_URL = os.getenv("API_modelCNN_URL")
+API_CALCUL_URL = os.getenv("API_CALCUL_URL")
+
+
+#### PATHES  ### 
+
 s3 = boto3.client('s3')
 
-DATA_URL = "https://music-classification-project2.s3.eu-west-3.amazonaws.com/music-database/"
+DATA_URL = "https://music-classification-project2.s3.eu-west-3.amazonaws.com/music-database/"  # to remove 
 
-GENERAL_PATH = urljoin(DATA_URL, "gtzan-dataset-music-genre-classification/Data")
+GENERAL_PATH = urljoin(DATA_URL, "gtzan-dataset-music-genre-classification/Data") # to remove
+GENRES_PATH  = urljoin(GENERAL_PATH, "genres_original")
+
 BUCKET = os.getenv("AWS_BUCKET")
 #BUCKET = 'music-classification-project2'
-GENRES_PREFIX = 'music-database/gtzan-dataset-music-genre-classification/Data/genres_original/'
-
-GENRES_PATH  = urljoin(GENERAL_PATH, "genres_original")
-PCA_PREFIX     = "music-database/gtzan-dataset-music-genre-classification/Data/PCA"
 MUSIC_DATABASE_PREFIX = "music-database/gtzan-dataset-music-genre-classification/Data/"
+#GENRES_PREFIX = 'music-database/gtzan-dataset-music-genre-classification/Data/genres_original/'
+GENRES_PREFIX = MUSIC_DATABASE_PREFIX + "genres_original/"
+
+#PCA_DIR     = "PCA"
+PCA_PREFIX = MUSIC_DATABASE_PREFIX + "PCA/"
+PCA_PIPELINE = "pca_pipeline.pkl"  # pkl containing complete pca pipeline
+PCA_X_PCA = "X_pca.csv"  # coordinates in PCA axes 
 
 # START_PATH        = Path(r"C:/Users/Cyril/Documents/python/jedha/M11_projet/explo/music_genre_classification/GTZAN_music_genre_classification"
 # GENERAL_PATH      = START_PATH / "Data"
 # GENRES_PATH       = f"{GENERAL_PATH}/genres_original"
 # PCA_PATH          = f"{GENERAL_PATH}/PCA"
 
-#MLFLOW_URI        = "https://cyrilbrg-mlflow-music.hf.space/"   # ← à jour
-MLFLOW_URI = os.getenv("MLFLOW_URI")
-#API_URL           = "http://localhost:8000/api_music_predict"  # ← à ajuster
-API_URL = os.getenv("API_URL")
-API_calcul_URL = os.getenv("API_CALCUL_URL")
 
 TARGET_SR         = 22050
 CLIP_DURATION     = 30       # secondes conservées après silence initial
@@ -423,44 +436,81 @@ def revert_pred(prediction):
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS — PCA & RECOMMANDATIONS
 # ─────────────────────────────────────────────────────────────────────────────
+from typing import Tuple, Any
 
 @st.cache_data(show_spinner=False)
-def load_pca_df(pca_path: str) -> pd.DataFrame:
-    """Charge le DataFrame PCA depuis le disque (CSV attendu)."""
+def load_pca_df(pca_path: str) -> Tuple[pd.DataFrame, Any]:
+    """Charge les donnees PCA : 
+    - X_pca_df : DataFrame X_PCA depuis le disque (CSV attendu).
+    - PCA_pipeline : model pipeline (transform + pca) depuis in .pkl """
+    
+    
     candidates = list(Path(pca_path).glob("*.csv"))
     if not candidates:
-        return pd.DataFrame()
-    df = pd.read_csv(candidates[0])
-    return df
+        X_pca_df = pd.DataFrame()
+    else:
+        X_pca_df = pd.read_csv(candidates[0]) # coordinates 
+    
+    candidates = list(Path(pca_path).glob("*.pkl"))
+    if not candidates:
+        print('no .pkl found in PCA directory')
+        pca_pipeline = None
+    else: 
+        with open(candidates[0], 'rb') as f:
+            pca_pipeline = pickle.load(f) # coordinates 
+    return (X_pca_df,pca_pipeline)
 
 @st.cache_data(show_spinner=False)
-def load_pca_df_s3(PCA_PREFIX: str) -> pd.DataFrame:
+def load_pca_df_s3(PCA_PREFIX: str) -> Tuple[pd.DataFrame, Any]:
     """
-    Charge le DataFrame PCA depuis un bucket S3 (CSV attendu).
-    
+    Charge les donnees PCA depuis un bucket S3 (CSV attendu).
+        - X_pca_df : DataFrame X_PCA depuis le disque (CSV attendu).
+        - PCA_pipeline : model pipeline (transform + pca) depuis in .pkl
+        
     Args:
-        pca_prefix (str): Préfixe S3 où chercher les fichiers CSV (ex: 'path/to/pca/')
+        pca_prefix (str): Préfixe S3 où chercher les fichiers PCA (ex: 'path/to/pca/')
         
     Returns:
         pd.DataFrame: DataFrame chargé depuis le premier fichier CSV trouvé, ou DataFrame vide si aucun fichier.
     """
+    
+    # PCA_PREFIX = MUSIC_DATABASE_PREFIX + "PCA/"
+    # PCA_PIPELINE = "pca_pipeline.pkl"  # pkl containing complete pca pipeline
+    # PCA_X_PCA = "X_pca.csv"
+    
     s3 = boto3.client('s3')
+    x_pca_key = PCA_PREFIX + PCA_X_PCA
+    pca_pipeline_key = PCA_PREFIX + PCA_PIPELINE
+    # Initialisation des résultats
+    X_pca_df = None
+    pca_pipeline = None
     
     # Lister les fichiers CSV sous le préfixe donné
     response = s3.list_objects_v2(Bucket=BUCKET, Prefix=PCA_PREFIX)
-    if 'Contents' not in response:
-        return pd.DataFrame()
+    # Charger le CSV
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=x_pca_key)
+        data = obj['Body'].read()
+        X_pca_df = pd.read_csv(io.BytesIO(data))
+    except s3.exceptions.NoSuchKey:
+        print(f"Fichier CSV '{x_pca_key}' non trouvé dans le bucket {BUCKET}.")
+        X_pca_df= None
+    except Exception as e:
+        print(f"Erreur lors du chargement du CSV '{x_pca_key}': {e}")
+        X_pca_df= None
+            
+    # Filtrer les fichiers .pkl
     
-    # Filtrer les fichiers CSV
-    csv_files = [obj['Key'] for obj in response['Contents'] if obj['Key'].endswith('.csv')]
-    if not csv_files:
-        return pd.DataFrame()
-    
-    # Charger le premier fichier CSV trouvé
-    obj = s3.get_object(Bucket=BUCKET, Key=csv_files[0])
-    data = obj['Body'].read()
-    df = pd.read_csv(io.BytesIO(data))
-    return df
+    try:
+        # Charger le premier fichier pkl trouvé
+        obj = s3.get_object(Bucket=BUCKET, Key=pca_pipeline_key)
+        pca_pipeline = pickle.load(obj['Body'])
+    except s3.exceptions.NoSuchKey:
+        print(f"Fichier pickle '{pca_pipeline_key}' non trouvé dans le bucket {BUCKET}.")
+    except Exception as e:
+        print(f"Erreur lors du chargement du pickle '{pca_pipeline_key}': {e}")
+
+    return X_pca_df, pca_pipeline
 
 def get_recommendations(
     df_pca: pd.DataFrame,
@@ -869,6 +919,7 @@ with col2:
             spect = compute_melspectrogram(y_p, sr_p)
             list_features = [feats,spect]
             pred  = call_predict_api(model_name_selected, list_features)
+            
             st.session_state.predicted_genre = revert_pred(pred)
 
     st.markdown('<div class="section-title">🏷 Genre prédit</div>', unsafe_allow_html=True)
