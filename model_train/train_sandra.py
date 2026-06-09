@@ -55,7 +55,7 @@ if __name__ == "__main__":
         "s3://music-classification-project2/music-database/gtzan-dataset-music-genre-classification/Data/features_30_sec.csv"
     )
 
-    X = df.drop(columns=["filename","length", "label"])
+    X = df.drop(columns=["filename","length" "label"])
     y = df["label"]
 
     X_train, X_test, y_train, y_test = train_test_split(
