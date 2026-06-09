@@ -22,7 +22,7 @@ load_dotenv()
 # import model : 
 MLFLOW_TRACKING_URI = os.environ["MLFLOW_TRACKING_URI"]
 REGISTERED_MODEL_NAME = "MGC_features_SVM_baseline"
-
+MODEL_STAGE = "challenger"
 IMAGE_NX          = 432
 IMAGE_NY          = 288 
 IMAGE_N = IMAGE_NX * IMAGE_NY
@@ -147,6 +147,16 @@ class ImageCoord(BaseModel):
     def __repr__(self):
         return f"ImageCoord(coord_len={len(self.coord)})"
 
+class PredictionRequest_f(BaseModel):
+    """ contient model_name & NumFeatures"""
+    model_name: str
+    num_features: NumFeatures
+
+class PredictionRequest_i(BaseModel):
+    """ contient model_name & ImageCoord"""
+    model_name: str
+    image_coords: ImageCoord
+
    
 class BaseModelList(BaseModel):
     """
@@ -195,8 +205,6 @@ tags_metadata = [
 # MGC_features_SVM_baseline @challenger
 
 
-...
-...
 # stocker un dico en var env : 
 # my_dict = {"key1": "value1", "key2": "value2"}
 #os.environ["MY_DICT"] = json.dumps(my_dict)
@@ -289,14 +297,14 @@ async def update_model(payload: ItemModel):
     return {"message": "Dictionnaire mis à jour avec succès", "stored_data": model_dict}
 
     
-@app.post("/predict")
-async def predict(request: PredictionRequest):
+@app.post("/predict_f")
+async def predict_f(request: PredictionRequest_f):
     # Vérifier que le modèle demandé existe
     # if request.model_name not in model_dict:
     #     raise HTTPException(status_code=404, detail="Model not found")
 
     model_name = request.model_name
-    list_features = request.list_features
+    num_features = request.num_features
 
     model_type =  detect_model_type(model_name)
            
@@ -306,7 +314,7 @@ async def predict(request: PredictionRequest):
 
     # Charger le modèle MLflow
     try:
-        model_uri = get_model_uri(model_name,stage="challenger")
+        model_uri = get_model_uri(model_name,stage=MODEL_STAGE)
         model = mlflow.pyfunc.load_model(model_uri)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading model: {e}")
@@ -330,10 +338,10 @@ async def predict(request: PredictionRequest):
             # # Adapter selon le modèle
             # prediction = model.predict([features])
             
-            features_dicts = [feature.dict() for feature in request.list_features.num_features]
-
+            #features_dicts = [feature.dict() for feature in request.list_features.num_features]
+            #features_dict = num_features
             # Créer un DataFrame pandas avec toutes les features
-            features_df = pd.DataFrame(features_dicts)
+            features_df = pd.DataFrame(num_features)
 
             # Colonnes à supprimer si présentes
             cols_to_drop = ["filename", "length","label"]
@@ -347,11 +355,46 @@ async def predict(request: PredictionRequest):
     
         # utiliser @app.post("/extract", tags=["features"]) pour fabriquer le json  
             
-        elif model_type == "image":
+            
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported model type")
+    except IndexError:
+        raise HTTPException(status_code=400, detail="Insufficient features provided")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction error: {e}")
+
+    return {"prediction": prediction.tolist() if hasattr(prediction, "tolist") else prediction}
+
+
+@app.post("/predict_i")
+async def predict_i(request: PredictionRequest_i):
+    # Vérifier que le modèle demandé existe
+    # if request.model_name not in model_dict:
+    #     raise HTTPException(status_code=404, detail="Model not found")
+
+    model_name = request.model_name
+    image_coords= request.image_coords
+
+    model_type =  detect_model_type(model_name)
+           
+    # model_info = model_dict[request.model_key]
+    # model_type = model_info["type"]
+    # model_uri = model_info["model_uri"]
+
+    # Charger le modèle MLflow
+    try:
+        model_uri = get_model_uri(model_name,stage=MODEL_STAGE)
+        model = mlflow.pyfunc.load_model(model_uri)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading model: {e}")
+
+    # Sélectionner les features selon le type
+    try:
+        if model_type == "image":
             # On prend la deuxième feature dans la liste
             #features_img = request.list_features[1]
-            features_img = request.list_features.image_coords
-            prediction = model.predict([features_img])
+            #features_img = request.list_features.image_coords
+            prediction = model.predict(image_coords)
             
             response = {"prediction": prediction.tolist()}
         

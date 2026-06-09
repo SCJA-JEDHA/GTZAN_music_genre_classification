@@ -529,7 +529,7 @@ def call_predict_api(model_name_selected: str, list_features_obj: list) -> str:
         str: Résultat de la prédiction ou message d'erreur.
     """
     features_df = list_features_obj[0]    # is a dataframe
-    num_features = features_df.to_dict(orient = "records")
+    num_features = features_df.iloc[0].to_dict()
     
     image_vector = list_features_obj[1]   # is format of image vector : [[],[],[]] perhaps
     image_vect_list = image_vector.tolist()
@@ -537,16 +537,15 @@ def call_predict_api(model_name_selected: str, list_features_obj: list) -> str:
     # Sérialiser en JSON
     json_img_str = json.dumps(image_vect_list)
     
-    payload = {
+    payload_f = {
         "model_name": model_name_selected,
-        
-        "list_features": {
-            "num_features": num_features, # [num_features_obj],  # liste d'un seul élément NumFeatures
-            "image_coords": coords_2 # [{"coord": coords} for coords in image_coords_list]  # liste d'objets ImageCoord
-        }
-        
+        "num_features": num_features, # [num_features_obj],  # liste d'un seul élément NumFeatures
     }
-    print(payload)
+    # payload_i = {
+    #     "model_name": model_name_selected,
+    #     "image_coords": coords_2 # [{"coord": coords} for coords in image_coords_list]  # liste d'objets ImageCoord
+    # }
+    st.write(payload_f)
 
     
     # #####
@@ -554,13 +553,13 @@ def call_predict_api(model_name_selected: str, list_features_obj: list) -> str:
     #######
     
     try:
-        predict_url = API_URL+'predict'
-        resp = requests.post(predict_url, json=payload, timeout=10)
+        predict_url = API_URL+'predict_f'
+        resp = requests.post(predict_url, json=payload_f, timeout=10)
         
         resp.raise_for_status()
         data = resp.json()
         # Adapter la clé de retour selon votre API (exemple ici : 'prediction')
-        return data["prediction"][0]
+        return data["prediction"]
     except Exception as e:
         return f"Erreur API : {e}"
 
