@@ -1,4 +1,5 @@
 # API model predict 
+# fastapi dev API_music_predict.py --port 8000
 
 
 import uvicorn
@@ -18,6 +19,16 @@ import numpy as np
 import os
 # Load environment variables from the .env file (if present)
 load_dotenv()
+
+# declare ENV variables outside in .env file or somewhere else :
+# MLFLOW_TRACKING_URI=""
+# MLFLOW_REGISTERED_MODEL_NAME=""
+# AWS_ACCESS_KEY_ID=""
+# AWS_SECRET_ACCESS_KEY="""
+# BACKEND_STORE_URI="" # That one is optional if you didn't set it above
+# ARTIFACT_ROOT="s3..." # That one is optional if you didn't set it above
+# PORT=8000  
+
 
 # import model : 
 MLFLOW_TRACKING_URI = os.environ["MLFLOW_TRACKING_URI"]
