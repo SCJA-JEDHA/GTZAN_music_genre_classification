@@ -5,6 +5,7 @@ import os
 import mlflow
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 from mlflow import MlflowClient
 from mlflow.models import infer_signature
@@ -152,6 +153,23 @@ if __name__ == "__main__":
         print(f"[INFO] Run ID: {run.info.run_id}")
         print(f"[INFO] Test Accuracy Score: {test_accuracy_score:.4f}")
         print(f"[INFO] Test F1: {test_F1:.4f}")
+
+        class_names = list(mapping.keys())
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        ConfusionMatrixDisplay.from_predictions(
+            y_true=y_test_enc,
+            y_pred=predictions,
+            display_labels=class_names,
+            cmap='Blues',
+            xticks_rotation='vertical',
+            ax=ax
+        )
+
+        ax.set_title("Matrice de confusion test")
+        # Envoi à MLflow
+        mlflow.log_figure(fig, "confusion_matrix_audio_classifier_baseline_TEST.png")
 
     print("...Done!")
     print(f"--- Total training time: {time.time() - start_time:.2f} seconds")
