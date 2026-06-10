@@ -25,7 +25,7 @@ import mlflow.pyfunc
 import boto3
 import json
 import pickle
-import image
+from PIL import Image
 import base64
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ load_dotenv()  # charge les variables du fichier .env
 
 #MLFLOW_URI        = "https://cyrilbrg-mlflow-music.hf.space/"   # ← à jour
 MLFLOW_URI = os.getenv("MLFLOW_URI")
-#API_URL           = "http://localhost:8000/api_music_predict"  # ← for local use 
+#API_URL           = "http://localhost:8000/"  # ← for local use 
 # API_URL = "https://cyrilbrg-api-music-model-f.hf.space/" # ← for network config
 API_URL = os.getenv("API_URL")
 API_MODEL_CNN_URL = os.getenv("API_modelCNN_URL")
@@ -384,6 +384,12 @@ def audio_bytes_s3(s3_key: str) -> bytes:
     audio_bytes = obj['Body'].read()
     return audio_bytes
 
+def image_to_base64(img):
+    i_bytes = io.BytesIO()
+    img.save(i_bytes, format = "PNG")
+    i_bytes.seek(0)
+    return base64.b64encode(i_bytes.getvalue()).decode("utf-8")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS — VISUALISATION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -676,7 +682,7 @@ def calcul_image_pour_CNN(y, sr) -> Tuple[dict[2],np.ndarray[Any]]:
     
 
   
-def call_predict_api_CNN(payload_img: json/dict ) -> str:
+def call_predict_api_CNN(payload_img: Dict ) -> int:
     """ call api predict of CNN model 
         input :
             dict of 2 img converted in UTF8
@@ -689,7 +695,7 @@ def call_predict_api_CNN(payload_img: json/dict ) -> str:
         resp.raise_for_status()
         data = resp.json()
         # Adapter la clé de retour selon votre API (exemple ici : 'prediction')
-        return data["prediction"][0]
+        return data["prediction"]
         # return resp.json()
     except Exception as e:
         return f"Erreur API : {e}"
@@ -841,15 +847,18 @@ st.divider()
 
 # ── Session state ─────────────────────────────────────────────────────────────
 for key, default in {
-    "db_audio_bytes":    None,
-    "my_audio_bytes":    None,
-    "rec_audio_bytes":   None,
-    "predicted_genre":   "—",
-    "my_y":              None,
-    "my_sr":             None,
-    "db_y":              None,
-    "db_sr":             None,
-    "rec_y":             None,
+    "db_audio_bytes":       None,
+    "my_audio_bytes":       None,
+    "rec_audio_bytes":      None,
+    "my_payload_spectro":   None,
+    "predicted_genre_feat":   "—",
+    "predicted_genre_CNN":   "—",
+    "my_y":                 None,
+    "my_sr":                None,
+    "my_user_S_DB"      :   None,
+    "db_y":                 None,
+    "db_sr":                None,
+    "rec_y":                None,
     "rec_sr":            None,
     "my_features":       None,
     "my_coords_pca":     None,
@@ -1068,7 +1077,8 @@ with col3:
     )
 
     #df_pca = load_pca_df_s3(PCA_PREFIX)
-    X_pca_df, pca_pipeline = load_pca_df_s3(pca_prefix)
+    X_pca_df, pca_pipeline = load_pca_df_s3(PCA_PREFIX)
+    df_pca = X_pca_df
     name_col_candidates = [c for c in df_pca.columns
                            if c.lower() in ("filename", "name", "track", "file")] if not df_pca.empty else []
     name_col = name_col_candidates[0] if name_col_candidates else None
