@@ -56,7 +56,7 @@ MLFLOW_URI = os.getenv("MLFLOW_URI")
 #API_URL           = "http://localhost:8000/"  # ← for local use 
 # API_URL = "https://cyrilbrg-api-music-model-f.hf.space/" # ← for network config
 API_URL = os.getenv("API_URL")
-API_MODEL_CNN_URL = os.getenv("API_modelCNN_URL")
+API_MODEL_CNN_URL = os.getenv("API_MODEL_CNN_URL")
 API_CALCUL_URL = os.getenv("API_CALCUL_URL")
 
 
