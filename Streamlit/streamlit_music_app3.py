@@ -2,6 +2,8 @@
 Application Streamlit - Analyse & Classification Musicale
 Prédiction de genre musical via MLflow + recommandations PCA
 """
+# to launch the streamlit in local : 
+# streamlit run .\streamlit_music_app3.py --server.runOnSave true --logger.level=debug
 
 import io
 import requests
@@ -23,6 +25,8 @@ import mlflow.pyfunc
 import boto3
 import json
 import pickle
+import image
+import base64
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -49,7 +53,8 @@ load_dotenv()  # charge les variables du fichier .env
 
 #MLFLOW_URI        = "https://cyrilbrg-mlflow-music.hf.space/"   # ← à jour
 MLFLOW_URI = os.getenv("MLFLOW_URI")
-#API_URL           = "http://localhost:8000/api_music_predict"  # ← à ajuster
+#API_URL           = "http://localhost:8000/api_music_predict"  # ← for local use 
+# API_URL = "https://cyrilbrg-api-music-model-f.hf.space/" # ← for network config
 API_URL = os.getenv("API_URL")
 API_MODEL_CNN_URL = os.getenv("API_modelCNN_URL")
 API_CALCUL_URL = os.getenv("API_CALCUL_URL")
@@ -464,13 +469,14 @@ def load_pca_df(pca_path: str) -> Tuple[pd.DataFrame, Any]:
 def load_pca_df_s3(PCA_PREFIX: str) -> Tuple[pd.DataFrame, Any]:
     """
     Charge les donnees PCA depuis un bucket S3 (CSV attendu).
-        - X_pca_df : DataFrame X_PCA depuis le disque (CSV attendu).
-        - PCA_pipeline : model pipeline (transform + pca) depuis in .pkl
+    X_pca_df, pca_pipeline = load_pca_df_s3(pca_prefix) 
         
     Args:
         pca_prefix (str): Préfixe S3 où chercher les fichiers PCA (ex: 'path/to/pca/')
         
     Returns:
+        X_pca_df : pd.DataFrame X_PCA depuis le disque (CSV attendu).
+        PCA_pipeline : model pipeline (transform + pca) depuis in .pkl
         pd.DataFrame: DataFrame chargé depuis le premier fichier CSV trouvé, ou DataFrame vide si aucun fichier.
     """
     
@@ -553,6 +559,13 @@ def project_new_point(df_pca: pd.DataFrame, features: np.ndarray) -> np.ndarray:
     """
     Projette un nouveau vecteur de features dans l'espace PCA existant.
     Retourne les coordonnées PCA (3 composantes).
+    input:
+        pca_pipeline : pipeline of PCA transform : 
+            - transformer
+            - pca 
+        features : coord of all features used for pca transformation 
+        cols to remove are already removed 
+        
     """
     # for next update if columns are important
     # features = df_features.iloc[0].to_numpy()
@@ -571,6 +584,7 @@ def project_new_point(df_pca: pd.DataFrame, features: np.ndarray) -> np.ndarray:
     pca   = PCA(n_components=min(3, X_all.shape[1]))
     pca.fit(X_all)
     coords = pca.transform(features.reshape(1, -1))
+    X_test_pca = loaded_pipeline.transform(X_test)
     return coords[0]
 
 
@@ -592,6 +606,94 @@ def call_predict_api_old(model_name: str, features: np.ndarray, spect: np.ndarra
         return data.get("predicted_genre", "—")
     except Exception as e:
         return f"Erreur API : {e}"
+from typing import Tuple, Dict, Any 
+def calcul_image_pour_CNN(y, sr) -> Tuple[dict[2],np.ndarray[Any]]:
+    """
+    Compute spectrogram image(s) from one music "file" 
+    (payload_spectro,S_DB) = calcul_image_pour_CNN(y,sr)
+    
+    input
+        y, sr from librosa load of user music file
+    output 
+        payload_spectro : dict of 2 librosa spectro images (harmonic & percusive) 
+         for plotting in streamlit
+        payload_img : dict of 2 images dedicated for API_predict_CNN
+    """
+    #y, _ = librosa.effects.trim(y)
+
+    n_fft = N_FFT #2048        # Précision des détails du timbre
+    hop_length = HOP #512    # Résolution temporelle
+    n_mels = 128        # Hauteur de la fréquence
+
+    # Séparation harmonique/percussive
+    y_full = y
+    y_harmonic, y_percussive = librosa.effects.hpss(y)
+
+    # for visu :
+    S_base = librosa.feature.melspectrogram(y=y_full, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels = n_mels)
+    
+    S_h = librosa.feature.melspectrogram(y=y_harmonic, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels = n_mels)
+    S_p = librosa.feature.melspectrogram(y=y_percussive, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels = n_mels)
+
+    S_DB = librosa.power_to_db(S_base, ref=np.max) # nous avons remplacé amplitude_to_db
+    
+    S_DB_h = librosa.power_to_db(S_h, ref=np.max)
+    S_DB_p = librosa.power_to_db(S_p, ref=np.max)
+
+    S_DB = np.flipud(S_DB)
+    
+    S_DB_h = np.flipud(S_DB_h)
+    S_DB_p = np.flipud(S_DB_p)
+
+    norm_S_DB = (S_DB - S_DB.min()) / (S_DB.max() - S_DB.min())
+    
+    norm_S_DB_h = (S_DB_h - S_DB_h.min()) / (S_DB_h.max() - S_DB_h.min())
+    norm_S_DB_p = (S_DB_p - S_DB_p.min()) / (S_DB_p.max() - S_DB_p.min())
+
+    #img_f = Image.fromarray((norm_S_DB * 255).astype(np.uint8))
+    img_h = Image.fromarray((norm_S_DB_h * 255).astype(np.uint8), mode = "L")
+    img_p = Image.fromarray((norm_S_DB_p * 255).astype(np.uint8), mode = "L")
+
+    #img_f = img_f.resize((512, 256), Image.Resampling.LANCZOS)
+    img_h = img_h.resize((256, 128), Image.Resampling.LANCZOS)
+    img_p = img_p.resize((256, 128), Image.Resampling.LANCZOS)
+
+    """h_bytes = io.BytesIO()
+    img_h.save(h_bytes, format="PNG")
+    h_bytes.seek(0)
+    p_bytes = io.BytesIO()
+    img_h.save(p_bytes, format="PNG")
+    p_bytes.seek(0)"""
+
+    b_harmo = image_to_base64(img_h)
+    b_percu = image_to_base64(img_p)
+
+    #spectro_at_predict = {"harmo_file" : ("harmo.png", h_bytes, "image/png"), "percu_file" : ("percu.png", p_bytes, "image/png")}
+    payload_spectro = {"harmo_file" : b_harmo, "percu_file" : b_percu}
+
+    #resp = requests.post(url = "https://dareindodo-api-dl-predict.hf.space/predict-cnn", json = spectro_at_predict)
+    return (payload_spectro,S_DB)
+    
+
+  
+def call_predict_api_CNN(payload_img: json/dict ) -> str:
+    """ call api predict of CNN model 
+        input :
+            dict of 2 img converted in UTF8
+            payload_img = {"img1":[ utf8_1, utf8_2, ... ],"img2":[] }
+    """
+    try:
+        predict_url = API_MODEL_CNN_URL + 'predict-cnn'
+        resp = requests.post(url = predict_url, json = payload_img)
+        
+        resp.raise_for_status()
+        data = resp.json()
+        # Adapter la clé de retour selon votre API (exemple ici : 'prediction')
+        return data["prediction"][0]
+        # return resp.json()
+    except Exception as e:
+        return f"Erreur API : {e}"
+    
 
 def call_predict_api(model_name_selected: str, list_features_obj: list) -> str:
     """
@@ -848,6 +950,10 @@ with col2:
                 st.session_state.my_sr        = sr_proc
                 st.session_state.my_audio_bytes = raw_bytes
                 st.session_state.my_features  = compute_features(y_proc, sr_proc)
+                (st.session_state.my_payload_spectro,st.session_state.my_user_S_DB) = (
+                    calcul_image_pour_CNN(y_proc, sr_proc)
+                )
+                 
             st.success("Signal prétraité.")
 
     if st.session_state.my_audio_bytes:
@@ -916,15 +1022,26 @@ with col2:
         with st.spinner("Appel API prédiction…"):
             y_p, sr_p = st.session_state.my_y, st.session_state.my_sr
             feats = st.session_state.my_features  # is a dataframe
-            spect = compute_melspectrogram(y_p, sr_p)
+            spect = compute_melspectrogram(y_p, sr_p)  # to remove
             list_features = [feats,spect]
-            pred  = call_predict_api(model_name_selected, list_features)
             
-            st.session_state.predicted_genre = revert_pred(pred)
+            # prediction from features model 
+            pred1  = call_predict_api(model_name_selected, list_features)
+            st.session_state.predicted_genre_feat = revert_pred(pred1)
+            
+            # prediction from CNN model :
+            payload_spectro = st.session_state.my_payload_spectro
+            pred_CNN = call_predict_api_CNN(payload_spectro)
+            st.session_state.predicted_genre_CNN = revert_pred(pred_CNN)
 
     st.markdown('<div class="section-title">🏷 Genre prédit</div>', unsafe_allow_html=True)
+    
     st.markdown(
-        f'<span class="predicted-badge">{st.session_state.predicted_genre}</span>',
+        f'<span class="predicted-badge">{st.session_state.predicted_genre_feat}</span>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f'<span class="predicted-badge">{st.session_state.predicted_genre_CNN}</span>',
         unsafe_allow_html=True
     )
 
@@ -950,7 +1067,8 @@ with col3:
         horizontal=True, key="rec_source"
     )
 
-    df_pca = load_pca_df_s3(PCA_PREFIX)
+    #df_pca = load_pca_df_s3(PCA_PREFIX)
+    X_pca_df, pca_pipeline = load_pca_df_s3(pca_prefix)
     name_col_candidates = [c for c in df_pca.columns
                            if c.lower() in ("filename", "name", "track", "file")] if not df_pca.empty else []
     name_col = name_col_candidates[0] if name_col_candidates else None
