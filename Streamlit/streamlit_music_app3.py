@@ -2,8 +2,11 @@
 Application Streamlit - Analyse & Classification Musicale
 Prédiction de genre musical via MLflow + recommandations PCA
 """
+# to launch the streamlit in local : 
+# streamlit run .\streamlit_music_app3.py --server.runOnSave true --logger.level=debug
 
 import io
+from regex import P
 import requests
 import numpy as np
 import pandas as pd
@@ -16,12 +19,16 @@ import streamlit as st
 from pathlib import Path
 from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
+from sklearn.pipeline import Pipeline
 import plotly.express as px
 import plotly.graph_objects as go
 import mlflow
 import mlflow.pyfunc
 import boto3
 import json
+import pickle
+from PIL import Image
+import base64
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -44,29 +51,42 @@ import boto3
 
 load_dotenv()  # charge les variables du fichier .env
 
+### ENV   ### 
+
+#MLFLOW_URI        = "https://cyrilbrg-mlflow-music.hf.space/"   # ← à jour
+MLFLOW_URI = os.getenv("MLFLOW_URI")
+#API_URL           = "http://localhost:8000/"  # ← for local use 
+# API_URL = "https://cyrilbrg-api-music-model-f.hf.space/" # ← for network config
+API_URL = os.getenv("API_URL")
+API_MODEL_CNN_URL = os.getenv("API_MODEL_CNN_URL")
+API_CALCUL_URL = os.getenv("API_CALCUL_URL")
+
+
+#### PATHES  ### 
+
 s3 = boto3.client('s3')
 
-DATA_URL = "https://music-classification-project2.s3.eu-west-3.amazonaws.com/music-database/"
+DATA_URL = "https://music-classification-project2.s3.eu-west-3.amazonaws.com/music-database/"  # to remove 
 
-GENERAL_PATH = urljoin(DATA_URL, "gtzan-dataset-music-genre-classification/Data")
+GENERAL_PATH = urljoin(DATA_URL, "gtzan-dataset-music-genre-classification/Data") # to remove
+GENRES_PATH  = urljoin(GENERAL_PATH, "genres_original")
+
 BUCKET = os.getenv("AWS_BUCKET")
 #BUCKET = 'music-classification-project2'
-GENRES_PREFIX = 'music-database/gtzan-dataset-music-genre-classification/Data/genres_original/'
-
-GENRES_PATH  = urljoin(GENERAL_PATH, "genres_original")
-PCA_PREFIX     = "music-database/gtzan-dataset-music-genre-classification/Data/PCA"
 MUSIC_DATABASE_PREFIX = "music-database/gtzan-dataset-music-genre-classification/Data/"
+#GENRES_PREFIX = 'music-database/gtzan-dataset-music-genre-classification/Data/genres_original/'
+GENRES_PREFIX = MUSIC_DATABASE_PREFIX + "genres_original/"
+
+#PCA_DIR     = "PCA"
+PCA_PREFIX = MUSIC_DATABASE_PREFIX + "PCA/"
+PCA_PIPELINE = "pca_pipeline.pkl"  # pkl containing complete pca pipeline
+PCA_X_PCA = "X_pca.csv"  # coordinates in PCA axes 
 
 # START_PATH        = Path(r"C:/Users/Cyril/Documents/python/jedha/M11_projet/explo/music_genre_classification/GTZAN_music_genre_classification"
 # GENERAL_PATH      = START_PATH / "Data"
 # GENRES_PATH       = f"{GENERAL_PATH}/genres_original"
 # PCA_PATH          = f"{GENERAL_PATH}/PCA"
 
-#MLFLOW_URI        = "https://cyrilbrg-mlflow-music.hf.space/"   # ← à jour
-MLFLOW_URI = os.getenv("MLFLOW_URI")
-#API_URL           = "http://localhost:8000/api_music_predict"  # ← à ajuster
-API_URL = os.getenv("API_URL")
-API_calcul_URL = os.getenv("API_CALCUL_URL")
 
 TARGET_SR         = 22050
 CLIP_DURATION     = 30       # secondes conservées après silence initial
@@ -86,31 +106,19 @@ LIST_GENRES = [
     'reggae', 
     'rock']
 
-# stocker un dico en var env : 
-# my_dict = {"key1": "value1", "key2": "value2"}
-#os.environ["MY_DICT"] = json.dumps(my_dict)
-model_dict_str = os.getenv("MODEL_DICT")
-if model_dict_str:
-    MODEL_DICT = json.loads(model_dict_str)
-else:
-    MODEL_DICT = {}
+dict_genres =  {
+  "blues": 0,
+  "classical": 1,
+  "country": 2,
+  "disco": 3,
+  "hiphop": 4,
+  "jazz": 5,
+  "metal": 6,
+  "pop": 7,
+  "reggae": 8,
+  "rock": 9
+}
 
-# Example of model dict to put in .env or in hugging param
-"""
-model_dict = {
-    "model1":{
-        "name":"MGC_features_SVM_baseline",
-        "type":"feature",
-        "model_uri":"models:/registered_model1@production"
-    },
-    "model2":{
-        "name":"toto",
-        "type":"image",
-        "model_uri":"models:/registered_model2@production"
-    }
-"""
-# st.write("GENRES_PATH existe :", Path(GENRES_PATH), Path(GENRES_PATH).exists())
-# st.write("GENRES_PATH absolu :", Path(GENRES_PATH).resolve())
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS — AUDIO
@@ -126,7 +134,7 @@ def url_exists(url: str) -> bool:
 import boto3
 from botocore.exceptions import ClientError
 
- 
+@st.cache_data(show_spinner=False) 
 def s3_key_exists(bucket: str, key: str) -> bool:
     s3 = boto3.client('s3')
     try:
@@ -139,7 +147,7 @@ def s3_key_exists(bucket: str, key: str) -> bool:
             raise  # autre erreur, on la remonte
 
 
-
+@st.cache_data(show_spinner=False)
 def list_s3_subdirectories_sorted(bucket_name: str, prefix: str):
     s3 = boto3.client('s3')
     paginator = s3.get_paginator('list_objects_v2')
@@ -163,6 +171,7 @@ def list_s3_subdirectories_sorted(bucket_name: str, prefix: str):
     return genres
 
 
+@st.cache_data(show_spinner=False)
 def list_genres() -> list[str]:
     """Retourne la liste des genres (sous-répertoires de genres_original)."""
     
@@ -177,6 +186,7 @@ def list_genres() -> list[str]:
         return sorted([f.stem for f in p.glob("*.wav")])
     """
 
+@st.cache_data(show_spinner=False)
 def list_tracks(genre: str) -> list[str]:
     """Retourne la liste des fichiers .wav pour un genre donné dans S3."""
     s3 = boto3.client('s3')
@@ -197,11 +207,13 @@ def list_tracks(genre: str) -> list[str]:
     
     return sorted(tracks)
 
+@st.cache_data(show_spinner=False)
 def load_audio(path: str) -> tuple:
     """Charge un fichier audio → (y, sr) avec librosa."""
     y, sr = librosa.load(path, sr=None)
     return y, sr
 
+@st.cache_data(show_spinner=False)
 def load_audio_s3(s3_key: str) -> tuple:
     """
     Charge un fichier audio depuis S3 → (y, sr) avec librosa.
@@ -362,6 +374,12 @@ def audio_bytes_s3(s3_key: str) -> bytes:
     audio_bytes = obj['Body'].read()
     return audio_bytes
 
+def image_to_base64(img):
+    i_bytes = io.BytesIO()
+    img.save(i_bytes, format = "PNG")
+    i_bytes.seek(0)
+    return base64.b64encode(i_bytes.getvalue()).decode("utf-8")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS — VISUALISATION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -414,48 +432,89 @@ def revert_pred(prediction):
     mapping_LI = {l : unique_labels.index(l) for l in unique_labels}
     # Creating reverse mapping
     reverse_LI = {v : k for v, k in enumerate(mapping_LI)}
-    return reverse_LI
+    return reverse_LI[prediction]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS — PCA & RECOMMANDATIONS
 # ─────────────────────────────────────────────────────────────────────────────
+from typing import Tuple, Any
 
 @st.cache_data(show_spinner=False)
-def load_pca_df(pca_path: str) -> pd.DataFrame:
-    """Charge le DataFrame PCA depuis le disque (CSV attendu)."""
+def load_pca_df(pca_path: str) -> Tuple[pd.DataFrame, Any]:
+    """Charge les donnees PCA : 
+    - X_pca_df : DataFrame X_PCA depuis le disque (CSV attendu).
+    - PCA_pipeline : model pipeline (transform + pca) depuis in .pkl """
+    
+    
     candidates = list(Path(pca_path).glob("*.csv"))
     if not candidates:
-        return pd.DataFrame()
-    df = pd.read_csv(candidates[0])
-    return df
-
-def load_pca_df_s3(PCA_PREFIX: str) -> pd.DataFrame:
-    """
-    Charge le DataFrame PCA depuis un bucket S3 (CSV attendu).
+        X_pca_df = pd.DataFrame()
+    else:
+        X_pca_df = pd.read_csv(candidates[0]) # coordinates 
     
+    candidates = list(Path(pca_path).glob("*.pkl"))
+    if not candidates:
+        print('no .pkl found in PCA directory')
+        pca_pipeline = None
+    else: 
+        with open(candidates[0], 'rb') as f:
+            pca_pipeline = pickle.load(f) # coordinates 
+    return (X_pca_df,pca_pipeline)
+
+@st.cache_data(show_spinner=False)
+def load_pca_df_s3(PCA_PREFIX: str) -> Tuple[pd.DataFrame, Any]:
+    """
+    Charge les donnees PCA depuis un bucket S3 (CSV attendu).
+    X_pca_df, pca_pipeline = load_pca_df_s3(pca_prefix) 
+        
     Args:
-        pca_prefix (str): Préfixe S3 où chercher les fichiers CSV (ex: 'path/to/pca/')
+        pca_prefix (str): Préfixe S3 où chercher les fichiers PCA (ex: 'path/to/pca/')
         
     Returns:
+        X_pca_df : pd.DataFrame X_PCA depuis le disque (CSV attendu).
+        PCA_pipeline : model pipeline (transform + pca) depuis in .pkl
         pd.DataFrame: DataFrame chargé depuis le premier fichier CSV trouvé, ou DataFrame vide si aucun fichier.
     """
+    
+    # PCA_PREFIX = MUSIC_DATABASE_PREFIX + "PCA/"
+    # PCA_PIPELINE = "pca_pipeline.pkl"  # pkl containing complete pca pipeline
+    # PCA_X_PCA = "X_pca.csv"
+    
     s3 = boto3.client('s3')
+    x_pca_key = PCA_PREFIX + PCA_X_PCA
+    pca_pipeline_key = PCA_PREFIX + PCA_PIPELINE
+    # Initialisation des résultats
+    X_pca_df = None
+    pca_pipeline = None
     
     # Lister les fichiers CSV sous le préfixe donné
     response = s3.list_objects_v2(Bucket=BUCKET, Prefix=PCA_PREFIX)
-    if 'Contents' not in response:
-        return pd.DataFrame()
+    # Charger le CSV
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=x_pca_key)
+        data = obj['Body'].read()
+        X_pca_df = pd.read_csv(io.BytesIO(data))
+        print(f"fichier {x_pca_key} chargé")
+    except s3.exceptions.NoSuchKey:
+        print(f"Fichier CSV '{x_pca_key}' non trouvé dans le bucket {BUCKET}.")
+        X_pca_df= None
+    except Exception as e:
+        print(f"Erreur lors du chargement du CSV '{x_pca_key}': {e}")
+        X_pca_df= None
+            
+    # Filtrer les fichiers .pkl
     
-    # Filtrer les fichiers CSV
-    csv_files = [obj['Key'] for obj in response['Contents'] if obj['Key'].endswith('.csv')]
-    if not csv_files:
-        return pd.DataFrame()
-    
-    # Charger le premier fichier CSV trouvé
-    obj = s3.get_object(Bucket=BUCKET, Key=csv_files[0])
-    data = obj['Body'].read()
-    df = pd.read_csv(io.BytesIO(data))
-    return df
+    try:
+        # Charger le premier fichier pkl trouvé
+        obj = s3.get_object(Bucket=BUCKET, Key=pca_pipeline_key)
+        pca_pipeline = pickle.load(obj['Body'])
+        print(f"file {pca_pipeline_key} loaded")
+    except s3.exceptions.NoSuchKey:
+        print(f"Fichier pickle '{pca_pipeline_key}' non trouvé dans le bucket {BUCKET}.")
+    except Exception as e:
+        print(f"Erreur lors du chargement du pickle '{pca_pipeline_key}': {e}")
+
+    return X_pca_df, pca_pipeline
 
 def get_recommendations(
     df_pca: pd.DataFrame,
@@ -466,8 +525,10 @@ def get_recommendations(
     """
     Retourne les n_neighbors voisins les plus proches dans l'espace PCA
     pour le genre donné.
+    Note : ajouter la coordonnee pca de "ma musique" si necessaire : 
     """
-    pc_cols = [c for c in df_pca.columns if "principal component" in c.lower()]
+    keywords = ["principal component" ,"princ_comp"]
+    pc_cols = [c for c in df_pca.columns if any(keyword in c.lower() for keyword in keywords)]
     if not pc_cols or "label" not in df_pca.columns:
         return pd.DataFrame()
 
@@ -494,51 +555,154 @@ def get_recommendations(
     return genre_df.iloc[neighbor_locs]
 
 
-def project_new_point(df_pca: pd.DataFrame, features: np.ndarray) -> np.ndarray:
+def get_recommendations_my_music(
+    df_pca: pd.DataFrame,
+    pca_pipeline: Pipeline,
+    my_features_clean: pd.DataFrame,
+    genre: str,
+    n_neighbors: int = 4
+) -> pd.DataFrame:
+    """
+    Retourne les n_neighbors voisins les plus proches de my_music dans l'espace PCA
+    pour le genre donné.
+    specific verwion for my_music with pca_pipeline & coordonnee pca de "ma musique" si necessaire : 
+    """
+    
+    
+    keywords = ["principal component" ,"princ_comp"]
+    pc_cols = [c for c in df_pca.columns if any(keyword in c.lower() for keyword in keywords)]
+    if not pc_cols or "label" not in df_pca.columns:
+        return pd.DataFrame()
+
+    genre_df = df_pca[df_pca["label"] == genre].copy()
+    if genre_df.empty or len(genre_df) <= n_neighbors:
+        return genre_df
+
+    # Recherche du morceau source
+    name_col = [c for c in df_pca.columns if c.lower() in ("filename", "name", "track", "file")]
+    if not name_col:
+        return genre_df.head(n_neighbors)
+    name_col = name_col[0]
+
+    X_my_music = pca_pipeline.transform(my_features_clean)
+    X = genre_df[pc_cols].values
+    nbrs = NearestNeighbors(n_neighbors=n_neighbors, metric="euclidean").fit(X)
+    # src_idx = source.index[0]
+    # loc_idx = genre_df.index.get_loc(src_idx)
+    #distances, indices = nbrs.kneighbors(X[loc_idx:loc_idx+1])
+    distances, indices = nbrs.kneighbors(X_my_music)
+    neighbor_locs = indices[0][:]  # on prend tous les morceaux car my_music n'est pas dans la base !
+    return genre_df.iloc[neighbor_locs]
+
+def project_new_point(pca_pipeline: Pipeline, features: np.ndarray) -> np.ndarray:
     """
     Projette un nouveau vecteur de features dans l'espace PCA existant.
     Retourne les coordonnées PCA (3 composantes).
+    input:
+        pca_pipeline : pipeline of PCA transform : 
+            - transformer
+            - pca 
+        features : coord of all features used for pca transformation 
+        cols to remove are already removed 
+        
     """
     # for next update if columns are important
     # features = df_features.iloc[0].to_numpy()
     # column_names = df_features.columns
     # To check : same columns as PCA matrix !! 
-    pc_cols = [c for c in df_pca.columns if "principal component" in c.lower()]
-    if not pc_cols:
-        return np.zeros(3)
-    # On ré-entraîne un PCA sur les données existantes — approximation acceptable
-    # pour la visualisation uniquement.
-    feat_cols = [c for c in df_pca.columns if c not in pc_cols + ["label"] + 
-                 [c for c in df_pca.columns if c.lower() in ("filename","name","track","file")]]
-    if not feat_cols:
-        return np.zeros(3)
-    X_all = df_pca[feat_cols].values
-    pca   = PCA(n_components=min(3, X_all.shape[1]))
-    pca.fit(X_all)
-    coords = pca.transform(features.reshape(1, -1))
-    return coords[0]
+    
+    
+    X_test_pca = pca_pipeline.transform(features)
+    return X_test_pca[0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS — API PRÉDICTION
 # ─────────────────────────────────────────────────────────────────────────────
 
-def call_predict_api_old(model_name: str, features: np.ndarray, spect: np.ndarray) -> str:
-    """Appelle l'API de prédiction et retourne le genre prédit."""
-    payload = {
-        "model_name": model_name,
-        "features":   features.tolist(),
-        "spectrogram": spect.tolist(),
-    }
+
+def calcul_image_pour_CNN(y, sr) -> Tuple[dict[2],np.ndarray[Any]]:
+    """
+    Compute spectrogram image(s) from one music "file" 
+    (payload_spectro,S_DB) = calcul_image_pour_CNN(y,sr)
+    
+    input
+        y, sr from librosa load of user music file
+    output 
+        payload_spectro : dict of 2 librosa spectro images (harmonic & percusive) 
+         for plotting in streamlit
+        payload_img : dict of 2 images dedicated for API_predict_CNN
+    """
+    #y, _ = librosa.effects.trim(y)
+
+    n_fft = N_FFT #2048        # Précision des détails du timbre
+    hop_length = HOP #512    # Résolution temporelle
+    n_mels = 128        # Hauteur de la fréquence
+
+    # Séparation harmonique/percussive
+    y_full = y
+    y_harmonic, y_percussive = librosa.effects.hpss(y)
+
+    # for visu :
+    S_base = librosa.feature.melspectrogram(y=y_full, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels = n_mels)
+    
+    S_h = librosa.feature.melspectrogram(y=y_harmonic, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels = n_mels)
+    S_p = librosa.feature.melspectrogram(y=y_percussive, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels = n_mels)
+
+    S_DB = librosa.power_to_db(S_base, ref=np.max) # nous avons remplacé amplitude_to_db
+    
+    S_DB_h = librosa.power_to_db(S_h, ref=np.max)
+    S_DB_p = librosa.power_to_db(S_p, ref=np.max)
+
+    S_DB = np.flipud(S_DB)
+    
+    S_DB_h = np.flipud(S_DB_h)
+    S_DB_p = np.flipud(S_DB_p)
+
+    norm_S_DB = (S_DB - S_DB.min()) / (S_DB.max() - S_DB.min())
+    
+    norm_S_DB_h = (S_DB_h - S_DB_h.min()) / (S_DB_h.max() - S_DB_h.min())
+    norm_S_DB_p = (S_DB_p - S_DB_p.min()) / (S_DB_p.max() - S_DB_p.min())
+
+    #img_f = Image.fromarray((norm_S_DB * 255).astype(np.uint8))
+    img_h = Image.fromarray((norm_S_DB_h * 255).astype(np.uint8), mode = "L")
+    img_p = Image.fromarray((norm_S_DB_p * 255).astype(np.uint8), mode = "L")
+
+    #img_f = img_f.resize((512, 256), Image.Resampling.LANCZOS)
+    img_h = img_h.resize((256, 128), Image.Resampling.LANCZOS)
+    img_p = img_p.resize((256, 128), Image.Resampling.LANCZOS)
+
+    b_harmo = image_to_base64(img_h)
+    b_percu = image_to_base64(img_p)
+
+    #spectro_at_predict = {"harmo_file" : ("harmo.png", h_bytes, "image/png"), "percu_file" : ("percu.png", p_bytes, "image/png")}
+    payload_spectro = {"harmo_file" : b_harmo, "percu_file" : b_percu}
+
+    #resp = requests.post(url = "https://dareindodo-api-dl-predict.hf.space/predict-cnn", json = spectro_at_predict)
+    return (payload_spectro,S_DB)
+    
+
+  
+def call_predict_api_CNN(payload_img: dict ) -> int:
+    """ call api predict of CNN model 
+        input :
+            dict of 2 img converted in UTF8
+            payload_img = {"img1":[ utf8_1, utf8_2, ... ],"img2":[] }
+    """
     try:
-        resp = requests.get(API_URL, json=payload, timeout=10)
+        predict_url = API_MODEL_CNN_URL + 'predict-cnn'
+        resp = requests.post(url = predict_url, json = payload_img)
+        
         resp.raise_for_status()
         data = resp.json()
-        return data.get("predicted_genre", "—")
+        # Adapter la clé de retour selon votre API (exemple ici : 'prediction')
+        return data["prediction"]
+        # return resp.json()
     except Exception as e:
         return f"Erreur API : {e}"
+    
 
-def call_predict_api(model_name_selected: str, list_features_obj: list) -> str:
+def call_predict_api(list_features_obj: list) -> str:
     """
     Appelle l'API de prédiction et retourne la prédiction.
 
@@ -560,14 +724,14 @@ def call_predict_api(model_name_selected: str, list_features_obj: list) -> str:
     json_img_str = json.dumps(image_vect_list)
     
     payload_f = {
-        "model_name": model_name_selected,
+        "model_name": "model_dummy",
         "num_features": num_features, # [num_features_obj],  # liste d'un seul élément NumFeatures
     }
     # payload_i = {
     #     "model_name": model_name_selected,
     #     "image_coords": coords_2 # [{"coord": coords} for coords in image_coords_list]  # liste d'objets ImageCoord
     # }
-    st.write(payload_f)
+    #st.write(payload_f)
 
     
     # #####
@@ -580,8 +744,8 @@ def call_predict_api(model_name_selected: str, list_features_obj: list) -> str:
         
         resp.raise_for_status()
         data = resp.json()
-        # Adapter la clé de retour selon votre API (exemple ici : 'prediction')
-        return data["prediction"]
+        #  clé de retour API 
+        return data["prediction"][0]  # correction : ce n'est plus une liste
     except Exception as e:
         return f"Erreur API : {e}"
 
@@ -684,15 +848,19 @@ st.divider()
 
 # ── Session state ─────────────────────────────────────────────────────────────
 for key, default in {
-    "db_audio_bytes":    None,
-    "my_audio_bytes":    None,
-    "rec_audio_bytes":   None,
+    "db_audio_bytes":       None,
+    "my_audio_bytes":       None,
+    "rec_audio_bytes":      None,
+    "my_payload_spectro":   None,
     "predicted_genre":   "—",
-    "my_y":              None,
-    "my_sr":             None,
-    "db_y":              None,
-    "db_sr":             None,
-    "rec_y":             None,
+    "predicted_genre_feat":   "—",
+    "predicted_genre_CNN":   "—",
+    "my_y":                 None,
+    "my_sr":                None,
+    "my_user_S_DB"      :   None,
+    "db_y":                 None,
+    "db_sr":                None,
+    "rec_y":                None,
     "rec_sr":            None,
     "my_features":       None,
     "my_coords_pca":     None,
@@ -793,61 +961,22 @@ with col2:
                 st.session_state.my_sr        = sr_proc
                 st.session_state.my_audio_bytes = raw_bytes
                 st.session_state.my_features  = compute_features(y_proc, sr_proc)
+                (st.session_state.my_payload_spectro,st.session_state.my_user_S_DB) = (
+                    calcul_image_pour_CNN(y_proc, sr_proc)
+                )
+                 
             st.success("Signal prétraité.")
 
     if st.session_state.my_audio_bytes:
         if st.button("▶ Play — Ma musique", width='stretch', key="btn_play_my"):
             pass  # audio déjà en session
         st.audio(st.session_state.my_audio_bytes)
-    st.markdown("---")
     
-# ── Sélection modèle MLflow ───────────────────────────────────────────────
-    st.markdown('<div class="section-title">🤖 Modèle MLflow</div>', unsafe_allow_html=True)
-    # model_names_mlflow = list_mlflow_models(mlflow_uri)
-    # model_sel   = st.selectbox(f"Modèle : ", model_names, key="mlflow_model")
-    model_names_mlflow = list_mlflow_models(mlflow_uri)
-    model_name_selected   = st.selectbox(f"Modèle : ", model_names_mlflow, key="mlflow_model")
     
-    # Initialisation de la variable d'état pour le résultat
-    # if "push_result" not in st.session_state:
-    #     st.session_state.push_result = None
-    # Création de colonnes pour aligner les widgets horizontalement
-    #col21, col22, col23 = st.columns([2, 3, 1])
-    # with col21:
-    #     # model_keys = list(MODEL_DICT.keys())
-    #     # selected_model_key = st.selectbox("Modèle :", model_keys, index=0, key="model_select")
-
-    # with col22:
-    #     # Texte non modifiable affichant le nom du modèle sélectionné
-    #     #st.text_input("Nom du modèle :", value=MODEL_DICT[selected_model_key]["name"], disabled=True, key="model_name_display")
-    #     model_names_mlflow = list_mlflow_models(mlflow_uri)
-    #     model_name_selected   = st.selectbox(f"Modèle : ", model_names_mlflow, key="mlflow_model")
-
-
-    # with col23:
-    #     # Voyant de couleur
-    #     if st.session_state.push_result is None:
-    #         color = "white"
-    #     elif "error" in st.session_state.push_result:
-    #         color = "red"
-    #     else:
-    #         color = "green"
-
-    #     st.markdown(f"""
-    #         <div style="
-    #             width: 20px;
-    #             height: 20px;
-    #             background-color: {color};
-    #             border: 1px solid black;
-    #             border-radius: 3px;
-    #             margin-top: 10px;
-    #             ">
-    #         </div>
-    #     """, unsafe_allow_html=True)
-  
     
     # ── Prédiction ────────────────────────────────────────────────────────────
     st.markdown("---")
+
     if st.button("🔍 Prédire le genre", width='stretch', key="btn_predict",
                  disabled=(st.session_state.my_y is None)):
         #push models in API 
@@ -861,14 +990,26 @@ with col2:
         with st.spinner("Appel API prédiction…"):
             y_p, sr_p = st.session_state.my_y, st.session_state.my_sr
             feats = st.session_state.my_features  # is a dataframe
-            spect = compute_melspectrogram(y_p, sr_p)
+            spect = compute_melspectrogram(y_p, sr_p)  # to remove
             list_features = [feats,spect]
-            pred  = call_predict_api(model_name_selected, list_features)
-            st.session_state.predicted_genre = pred
-
+            
+            # prediction from features model 
+            pred1  = call_predict_api(list_features)
+            st.session_state.predicted_genre_feat = revert_pred(pred1)
+            
+            # prediction from CNN model :
+            payload_spectro = st.session_state.my_payload_spectro
+            pred_CNN = call_predict_api_CNN(payload_spectro)
+            st.session_state.predicted_genre_CNN = revert_pred(pred_CNN)
+            st.session_state.predicted_genre = st.session_state.predicted_genre_CNN
     st.markdown('<div class="section-title">🏷 Genre prédit</div>', unsafe_allow_html=True)
+    
     st.markdown(
-        f'<span class="predicted-badge">{st.session_state.predicted_genre}</span>',
+        f'<span class="predicted-badge">{st.session_state.predicted_genre_feat}</span>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        f'<span class="predicted-badge">{st.session_state.predicted_genre_CNN}</span>',
         unsafe_allow_html=True
     )
 
@@ -894,7 +1035,27 @@ with col3:
         horizontal=True, key="rec_source"
     )
 
-    df_pca = load_pca_df_s3(PCA_PREFIX)
+    #df_pca = load_pca_df_s3(PCA_PREFIX)
+    X_pca_df, pca_pipeline = load_pca_df_s3(PCA_PREFIX)
+    
+    # Projection de ma musique dans l'espace PCA
+    my_pca_coords = None
+    if st.session_state.my_features is not None:
+        cols_to_drop = ["filename", "length","label"]
+        my_features_clean = (
+            st.session_state.my_features.drop(
+                columns=[col for col in cols_to_drop if col in st.session_state.my_features.columns])
+        )
+        print(f"my_features_clean :{my_features_clean}")
+        X_test_pca = pca_pipeline.transform(my_features_clean)
+        print(f"X__test_pca: {X_test_pca[0]}")
+
+        my_pca_coords = project_new_point(pca_pipeline, my_features_clean)
+        print(f"PCA_coords: {my_pca_coords}")
+        st.session_state.my_coords_pca = my_pca_coords
+    df_pca = X_pca_df
+    print(df_pca.head())
+    print(pca_pipeline)
     name_col_candidates = [c for c in df_pca.columns
                            if c.lower() in ("filename", "name", "track", "file")] if not df_pca.empty else []
     name_col = name_col_candidates[0] if name_col_candidates else None
@@ -912,7 +1073,10 @@ with col3:
     # Liste déroulante des recommandations
     rec_options = []
     if not df_pca.empty and src_genre:
-        rec_df = get_recommendations(df_pca, src_track, src_genre)
+        if source_choice == "database choice":
+            rec_df = get_recommendations(df_pca, src_track, src_genre)
+        else:
+            rec_df = get_recommendations_my_music(df_pca,pca_pipeline,my_features_clean,src_genre) 
         if name_col and not rec_df.empty:
             rec_options = rec_df[name_col].tolist()
 
@@ -925,14 +1089,20 @@ with col3:
     # Bouton Play recommandation
     if st.button("▶ Play — Recommandation", width='stretch', key="btn_play_rec"):
         if rec_sel and rec_sel != "(aucune recommandation disponible)" and src_genre:
-            rec_path = f"{GENRES_PATH}/{src_genre}/{rec_sel}.wav"
-            if Path(rec_path).exists():
-                st.session_state.rec_audio_bytes = audio_bytes(rec_path)
-                y_r, sr_r = load_audio(rec_path)
+            #rec_path = f"{GENRES_PATH}/{src_genre}/{rec_sel}"
+            s3_key = f"{GENRES_PREFIX}{src_genre}/{rec_sel}"
+            print(f"reco path: {s3_key}")
+            exist_key = s3_key_exists(BUCKET, s3_key)
+            print("exist_key: {exist_key}")
+            if s3_key and exist_key:
+                st.session_state.rec_audio_bytes = audio_bytes_s3(s3_key)
+                y_r, sr_r = load_audio_s3(s3_key)
                 st.session_state.rec_y  = trim_audio(y_r, sr_r)
                 st.session_state.rec_sr = sr_r
             else:
-                st.error("Fichier recommandation introuvable.")
+                print(s3_key)
+                print(f"key exist?: {exist_key}")
+                st.error(f"Fichier introuvable. key ?: {s3_key}")
 
     if st.session_state.rec_audio_bytes:
         st.audio(st.session_state.rec_audio_bytes, format="audio/wav")
@@ -942,6 +1112,7 @@ with col3:
     # ── Onglets visualisation ─────────────────────────────────────────────────
     tab_plot, tab_pca = st.tabs(["📊 Plot", "🔵 Composantes principales"])
 
+    # plot : 
     with tab_plot:
         if st.session_state.rec_y is not None:
             y_r, sr_r = st.session_state.rec_y, st.session_state.rec_sr
@@ -950,12 +1121,20 @@ with col3:
         else:
             st.info("Lancez une recommandation pour visualiser le signal.")
 
+    # composantes principales:
     with tab_pca:
         if df_pca.empty:
-            st.warning(f"Aucun fichier PCA trouvé dans `{PCA_PATH}`.")
+            st.warning(f"Aucun fichier PCA trouvé dans `{PCA_PREFIX}`.")
         else:
-            pc_cols = [c for c in df_pca.columns if "principal component" in c.lower()]
+            keywords = ["principal component", "princ_comp"]
+            pc_cols = [c for c in df_pca.columns if any (keyword in c.lower() for keyword in keywords) ]
 
+            
+            color_map = {
+                "base":         "#4a4a6a",
+                "sélection DB": "#de2626",
+                "ma musique":   "#033688",
+            }
             if len(pc_cols) < 3:
                 pc1, pc2 = pc_cols[0], pc_cols[1]
                 hover_data = {}
@@ -985,17 +1164,7 @@ with col3:
                 if name_col and src_track in df_plot[name_col].values:
                     df_plot.loc[df_plot[name_col] == src_track, "_highlight"] = "sélection DB"
 
-                # Projection de ma musique dans l'espace PCA
-                my_pca_coords = None
-                if st.session_state.my_features is not None:
-                    my_pca_coords = project_new_point(df_pca, st.session_state.my_features)
-                    st.session_state.my_coords_pca = my_pca_coords
-
-                color_map = {
-                    "base":         "#4a4a6a",
-                    "sélection DB": "#ef4444",
-                    "ma musique":   "#3b82f6",
-                }
+                
 
                 hover_data = {}
                 if name_col:
@@ -1003,6 +1172,7 @@ with col3:
                 if "label" in df_plot.columns:
                     hover_data["label"] = True
 
+                # plot database points:
                 fig_pca = px.scatter_3d(
                     df_plot,
                     x=pc1, y=pc2, z=pc3,
@@ -1025,6 +1195,20 @@ with col3:
                         text=["Ma musique"],
                         textposition="top center",
                         name="ma musique",
+                    ))
+                # Ajoute le point "database selection"
+                idx_sel = df_pca.index[df_pca['filename']==f"{track_sel}.wav"][0]
+                print(f"idx_sel: {idx_sel}")
+                if my_pca_coords is not None and len(my_pca_coords) >= 3:
+                    fig_pca.add_trace(go.Scatter3d(
+                        x=[df_pca[pc1][idx_sel]],
+                        y=[df_pca[pc2][idx_sel]],
+                        z=[df_pca[pc3][idx_sel]],
+                        mode="markers+text",
+                        marker=dict(size=10, color="#a01a10", symbol="diamond"),
+                        text=["Database sel."],
+                        textposition="top center",
+                        name="Database sel.",
                     ))
 
                 fig_pca.update_layout(

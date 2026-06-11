@@ -1,4 +1,5 @@
 # API model predict 
+# fastapi dev API_music_predict.py --port 8000
 
 
 import uvicorn
@@ -19,14 +20,26 @@ import os
 # Load environment variables from the .env file (if present)
 load_dotenv()
 
+# declare ENV variables outside in .env file or somewhere else :
+# MLFLOW_TRACKING_URI=""
+# MLFLOW_REGISTERED_MODEL_NAME=""
+# AWS_ACCESS_KEY_ID=""
+# AWS_SECRET_ACCESS_KEY="""
+# BACKEND_STORE_URI="" # That one is optional if you didn't set it above
+# ARTIFACT_ROOT="s3..." # That one is optional if you didn't set it above
+# PORT=8000  
+
+
 # import model : 
 MLFLOW_TRACKING_URI = os.environ["MLFLOW_TRACKING_URI"]
 REGISTERED_MODEL_NAME = "MGC_features_SVM_baseline"
+MODEL_ALIAS = "production_classifier"
 MODEL_STAGE = "challenger"
 IMAGE_NX          = 432
 IMAGE_NY          = 288 
 IMAGE_N = IMAGE_NX * IMAGE_NY
 tracking_uri = "https://cyrilbrg-mlflow-music.hf.space/"
+
 
 description = """
 API for Music type classification
@@ -248,6 +261,28 @@ def detect_model_type(model_name: str) -> str:
         return "feature"
     return "unknown"
 
+
+
+# PRODUCTION-MODEL SYNCHRONE #######
+def s_production_model():
+    # Création du client mlflow
+    client = mlflow.MlflowClient()
+    # Récupération du modèle standard pour le CNN
+    models = client.search_registered_models()
+    # Exception levée si non trouvé
+    if not models:
+        raise ValueError("Modèle non trouvé.")
+    for m in models:
+        if MODEL_ALIAS in m.aliases.keys():
+            model = m
+            version = m.aliases[MODEL_ALIAS]
+            alias = MODEL_ALIAS
+    
+    if not model:
+        raise HTTPException(status_code=400, detail="Aucun modèle en production trouvé.")
+    # Récupéversion = model.versionrsions avec aliases
+    return f"{model.name}/{version}"
+#######
 app = FastAPI(
     title="🪐 Music Classification model predict API",
     description=description,
@@ -275,6 +310,8 @@ Front-End should be able to choose one column and one or several categories with
 i.e the top 10% DailyRate or the lowest 5% DistanceFromHome
 Front-End should be able to choose the percentage and to choose whether it's the top or low values"""
 
+MODEL_ID = s_production_model()
+FEATURE_MODEL = mlflow.pyfunc.load_model("models:/" + f"{MODEL_ID}")
 
 
 @app.get("/model_list_mlflow")
@@ -317,47 +354,47 @@ async def predict_f(request: PredictionRequest_f):
 
     num_features.head()    
     
-    print(type(num_features))
-    model_type =  detect_model_type(model_name)
+    #print(type(num_features))
+    #model_type =  detect_model_type(model_name)
            
     # model_info = model_dict[request.model_key]
     # model_type = model_info["type"]
     # model_uri = model_info["model_uri"]
 
     # Charger le modèle MLflow
-    try:
-        model_uri = get_model_uri_hard(model_name,stage=MODEL_STAGE)
-        model = mlflow.pyfunc.load_model(model_uri)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error loading model: {e}")
+    # try:
+    #     model_uri = get_model_uri_hard(model_name,stage=MODEL_STAGE)
+    #     model = mlflow.pyfunc.load_model(model_uri)
+    # except Exception as e:
+    #     raise HTTPException(status_code=500, detail=f"Error loading model: {e}")
 
     # Sélectionner les features selon le type
     try:
-        if model_type == "feature":
-            print('model type =features')
-            features_df = num_features
-            features_df.head()
-            # Colonnes à supprimer si présentes
-            cols_to_drop = ["filename", "length","label"]
+    #     if model_type == "feature":
+        #print('model type =features')
+        features_df = num_features
+        features_df.head()
+        # Colonnes à supprimer si présentes
+        cols_to_drop = ["filename", "length","label"]
+        
+        features_df = features_df.drop(columns=[col for col in cols_to_drop if col in features_df.columns])
+        #print(features_df.head())
+        # Faire la prédiction sur tout le DataFrame
+        
+        prediction = FEATURE_MODEL.predict(features_df)
+        print(f"prediction: {prediction}")
+        # Retourner la liste complète des prédictions
+        response = {"predictions": prediction}
+
+    # utiliser @app.post("/extract", tags=["features"]) pour fabriquer le json  
+        
             
-            features_df = features_df.drop(columns=[col for col in cols_to_drop if col in features_df.columns])
-            print(features_df.head())
-            # Faire la prédiction sur tout le DataFrame
-            
-            prediction = model.predict(features_df)
-            print(f"prediction: {prediction}")
-            # Retourner la liste complète des prédictions
-            response = {"predictions": prediction.tolist()}
-    
-        # utiliser @app.post("/extract", tags=["features"]) pour fabriquer le json  
-            
-            
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported model type")
-    except IndexError:
-        raise HTTPException(status_code=400, detail="Insufficient features provided")
+    #     else:
+    #         raise HTTPException(status_code=400, detail="Unsupported model type")
+    # except IndexError:
+    #     raise HTTPException(status_code=400, detail="Insufficient features provided")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction error: {e}")
+         raise HTTPException(status_code=500, detail=f"Prediction error: {e}")
 
     return {"prediction": prediction.tolist() if hasattr(prediction, "tolist") else prediction}
 
