@@ -570,24 +570,10 @@ def project_new_point(pca_pipeline: Pipeline, features: np.ndarray) -> np.ndarra
     # features = df_features.iloc[0].to_numpy()
     # column_names = df_features.columns
     # To check : same columns as PCA matrix !! 
-    keywords = ["principal component", "princ_comp"]
-    pc_cols = [c for c in df_pca.columns if any (keyword in c.lower() for keyword in keywords) ]
-
-    if not pc_cols:
-        return np.zeros(3)
-    # On ré-entraîne un PCA sur les données existantes — approximation acceptable
-    # pour la visualisation uniquement.
-    feat_cols = [c for c in df_pca.columns if c not in pc_cols + ["label"] + 
-                 [c for c in df_pca.columns if c.lower() in ("filename","name","track","file")]]
-    if not feat_cols:
-        return np.zeros(3)
-    X_all = df_pca[feat_cols].values
-    pca   = PCA(n_components=min(3, X_all.shape[1]))
-    pca.fit(X_all)
-    coords = pca.transform(features.reshape(1, -1))
+    
     
     X_test_pca = pca_pipeline.transform(features)
-    return X_test_pca
+    return X_test_pca[0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -645,13 +631,6 @@ def calcul_image_pour_CNN(y, sr) -> Tuple[dict[2],np.ndarray[Any]]:
     #img_f = img_f.resize((512, 256), Image.Resampling.LANCZOS)
     img_h = img_h.resize((256, 128), Image.Resampling.LANCZOS)
     img_p = img_p.resize((256, 128), Image.Resampling.LANCZOS)
-
-    """h_bytes = io.BytesIO()
-    img_h.save(h_bytes, format="PNG")
-    h_bytes.seek(0)
-    p_bytes = io.BytesIO()
-    img_h.save(p_bytes, format="PNG")
-    p_bytes.seek(0)"""
 
     b_harmo = image_to_base64(img_h)
     b_percu = image_to_base64(img_p)
@@ -1019,6 +998,7 @@ with col3:
     #df_pca = load_pca_df_s3(PCA_PREFIX)
     X_pca_df, pca_pipeline = load_pca_df_s3(PCA_PREFIX)
     
+
     df_pca = X_pca_df
     print(df_pca.head())
     print(pca_pipeline)
@@ -1052,9 +1032,9 @@ with col3:
     # Bouton Play recommandation
     if st.button("▶ Play — Recommandation", width='stretch', key="btn_play_rec"):
         if rec_sel and rec_sel != "(aucune recommandation disponible)" and src_genre:
-            rec_path = f"{GENRES_PATH}/{src_genre}/{rec_sel}"
+            #rec_path = f"{GENRES_PATH}/{src_genre}/{rec_sel}"
             s3_key = f"{GENRES_PREFIX}{src_genre}/{rec_sel}"
-            print(f"rec path: {s3_key}")
+            print(f"reco path: {s3_key}")
             exist_key = s3_key_exists(BUCKET, s3_key)
             print("exist_key: {exist_key}")
             if s3_key and exist_key:
@@ -1075,6 +1055,7 @@ with col3:
     # ── Onglets visualisation ─────────────────────────────────────────────────
     tab_plot, tab_pca = st.tabs(["📊 Plot", "🔵 Composantes principales"])
 
+    # plot : 
     with tab_plot:
         if st.session_state.rec_y is not None:
             y_r, sr_r = st.session_state.rec_y, st.session_state.rec_sr
@@ -1083,6 +1064,7 @@ with col3:
         else:
             st.info("Lancez une recommandation pour visualiser le signal.")
 
+    # composantes principales:
     with tab_pca:
         if df_pca.empty:
             st.warning(f"Aucun fichier PCA trouvé dans `{PCA_PREFIX}`.")
@@ -1134,6 +1116,9 @@ with col3:
                             columns=[col for col in cols_to_drop if col in st.session_state.my_features.columns])
                     )
                     print(f"my_features_clean :{my_features_clean}")
+                    X_test_pca = pca_pipeline.transform(my_features_clean)
+                    print(f"X__test_pca: {X_test_pca[0]}")
+
                     my_pca_coords = project_new_point(pca_pipeline, my_features_clean)
                     print(f"PCA_coords: {my_pca_coords}")
                     st.session_state.my_coords_pca = my_pca_coords
@@ -1144,6 +1129,7 @@ with col3:
                 if "label" in df_plot.columns:
                     hover_data["label"] = True
 
+                # plot database points:
                 fig_pca = px.scatter_3d(
                     df_plot,
                     x=pc1, y=pc2, z=pc3,
@@ -1166,6 +1152,20 @@ with col3:
                         text=["Ma musique"],
                         textposition="top center",
                         name="ma musique",
+                    ))
+                # Ajoute le point "database selection"
+                idx_sel = df_pca.index[df_pca['filename']==f"{track_sel}.wav"][0]
+                print(f"idx_sel: {idx_sel}")
+                if my_pca_coords is not None and len(my_pca_coords) >= 3:
+                    fig_pca.add_trace(go.Scatter3d(
+                        x=[df_pca[pc1][idx_sel]],
+                        y=[df_pca[pc2][idx_sel]],
+                        z=[df_pca[pc3][idx_sel]],
+                        mode="markers+text",
+                        marker=dict(size=10, color="#a01a10", symbol="diamond"),
+                        text=["Database sel."],
+                        textposition="top center",
+                        name="Database sel.",
                     ))
 
                 fig_pca.update_layout(
