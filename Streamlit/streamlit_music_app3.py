@@ -525,6 +525,7 @@ def get_recommendations(
     """
     Retourne les n_neighbors voisins les plus proches dans l'espace PCA
     pour le genre donné.
+    Note : ajouter la coordonnee pca de "ma musique" si necessaire : 
     """
     keywords = ["principal component" ,"princ_comp"]
     pc_cols = [c for c in df_pca.columns if any(keyword in c.lower() for keyword in keywords)]
@@ -553,6 +554,45 @@ def get_recommendations(
     neighbor_locs = indices[0][1:]  # exclure le morceau lui-même
     return genre_df.iloc[neighbor_locs]
 
+
+def get_recommendations_my_music(
+    df_pca: pd.DataFrame,
+    pca_pipeline: Pipeline,
+    my_features_clean: pd.DataFrame,
+    genre: str,
+    n_neighbors: int = 4
+) -> pd.DataFrame:
+    """
+    Retourne les n_neighbors voisins les plus proches de my_music dans l'espace PCA
+    pour le genre donné.
+    specific verwion for my_music with pca_pipeline & coordonnee pca de "ma musique" si necessaire : 
+    """
+    
+    
+    keywords = ["principal component" ,"princ_comp"]
+    pc_cols = [c for c in df_pca.columns if any(keyword in c.lower() for keyword in keywords)]
+    if not pc_cols or "label" not in df_pca.columns:
+        return pd.DataFrame()
+
+    genre_df = df_pca[df_pca["label"] == genre].copy()
+    if genre_df.empty or len(genre_df) <= n_neighbors:
+        return genre_df
+
+    # Recherche du morceau source
+    name_col = [c for c in df_pca.columns if c.lower() in ("filename", "name", "track", "file")]
+    if not name_col:
+        return genre_df.head(n_neighbors)
+    name_col = name_col[0]
+
+    X_my_music = pca_pipeline.transform(my_features_clean)
+    X = genre_df[pc_cols].values
+    nbrs = NearestNeighbors(n_neighbors=n_neighbors, metric="euclidean").fit(X)
+    # src_idx = source.index[0]
+    # loc_idx = genre_df.index.get_loc(src_idx)
+    #distances, indices = nbrs.kneighbors(X[loc_idx:loc_idx+1])
+    distances, indices = nbrs.kneighbors(X_my_music)
+    neighbor_locs = indices[0][:]  # on prend tous les morceaux car my_music n'est pas dans la base !
+    return genre_df.iloc[neighbor_locs]
 
 def project_new_point(pca_pipeline: Pipeline, features: np.ndarray) -> np.ndarray:
     """
@@ -998,7 +1038,21 @@ with col3:
     #df_pca = load_pca_df_s3(PCA_PREFIX)
     X_pca_df, pca_pipeline = load_pca_df_s3(PCA_PREFIX)
     
+    # Projection de ma musique dans l'espace PCA
+    my_pca_coords = None
+    if st.session_state.my_features is not None:
+        cols_to_drop = ["filename", "length","label"]
+        my_features_clean = (
+            st.session_state.my_features.drop(
+                columns=[col for col in cols_to_drop if col in st.session_state.my_features.columns])
+        )
+        print(f"my_features_clean :{my_features_clean}")
+        X_test_pca = pca_pipeline.transform(my_features_clean)
+        print(f"X__test_pca: {X_test_pca[0]}")
 
+        my_pca_coords = project_new_point(pca_pipeline, my_features_clean)
+        print(f"PCA_coords: {my_pca_coords}")
+        st.session_state.my_coords_pca = my_pca_coords
     df_pca = X_pca_df
     print(df_pca.head())
     print(pca_pipeline)
@@ -1019,7 +1073,10 @@ with col3:
     # Liste déroulante des recommandations
     rec_options = []
     if not df_pca.empty and src_genre:
-        rec_df = get_recommendations(df_pca, src_track, src_genre)
+        if source_choice == "database choice":
+            rec_df = get_recommendations(df_pca, src_track, src_genre)
+        else:
+            rec_df = get_recommendations_my_music(df_pca,pca_pipeline,my_features_clean,src_genre) 
         if name_col and not rec_df.empty:
             rec_options = rec_df[name_col].tolist()
 
@@ -1107,21 +1164,7 @@ with col3:
                 if name_col and src_track in df_plot[name_col].values:
                     df_plot.loc[df_plot[name_col] == src_track, "_highlight"] = "sélection DB"
 
-                # Projection de ma musique dans l'espace PCA
-                my_pca_coords = None
-                if st.session_state.my_features is not None:
-                    cols_to_drop = ["filename", "length","label"]
-                    my_features_clean = (
-                        st.session_state.my_features.drop(
-                            columns=[col for col in cols_to_drop if col in st.session_state.my_features.columns])
-                    )
-                    print(f"my_features_clean :{my_features_clean}")
-                    X_test_pca = pca_pipeline.transform(my_features_clean)
-                    print(f"X__test_pca: {X_test_pca[0]}")
-
-                    my_pca_coords = project_new_point(pca_pipeline, my_features_clean)
-                    print(f"PCA_coords: {my_pca_coords}")
-                    st.session_state.my_coords_pca = my_pca_coords
+                
 
                 hover_data = {}
                 if name_col:
