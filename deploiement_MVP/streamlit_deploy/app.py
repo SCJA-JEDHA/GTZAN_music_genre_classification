@@ -67,6 +67,7 @@ MLFLOW_URI = os.getenv("MLFLOW_URI")
 #API_URL           = "http://localhost:8000/api_music_predict"  # ← à ajuster
 API_URL = os.getenv("API_URL")
 
+
 TARGET_SR         = 22050
 CLIP_DURATION     = 30       # secondes conservées après silence initial
 N_FFT_DEFAULT     = 2048
