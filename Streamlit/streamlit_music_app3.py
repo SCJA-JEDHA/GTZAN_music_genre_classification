@@ -837,7 +837,7 @@ def _visu_rec(src_choice):
                         text=["Ma musique"], textposition="top center",
                         name="ma musique",
                     ))
-git add
+
                 if name_col and track_sel:
                     sel_filename = f"{track_sel}.wav"
                     idx_matches  = df_pca.index[df_pca[name_col] == sel_filename]
