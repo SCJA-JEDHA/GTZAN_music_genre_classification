@@ -1,0 +1,97 @@
+propose moi un script python pour une app streamlit en format de page wide avec: 
+un titre et 3 lignes de texte descriptif
+3 colonnes comprenant : 
+
+colonne 1 a gauche : 
+  - un cadre select proposant :
+    -- de selectionner un genre dans la liste des repertoires de /dataset/Data/genres_original
+    -- select music : liste deroulante pour selectionner les morceaux du repertoire genre
+    -- un bouton "play" pour ecouter la musique chargee 
+
+  - un cadre visu : 
+    -- visu du temporel a partir du fichier avec la commande 
+        genre = "rock"
+        audio_file_name = f"{genre}.00053"
+        y, sr = librosa.load(f"{general_path}/genres_original/{genre}/{audio_file_name}.wav")
+        audio_file, _ = librosa.effects.trim(y)
+        librosa.display.waveshow(y = audio_file, sr = sr, color = "blue")
+        plt.title(f"Sound Waves in {audio_file_name}", fontsize = 23);
+    -- visu du spectrogramme : 
+        - des champs pour choisir les valeurs de :
+            - n_fft (par defaut 2048 ; mais proposer dans une liste deroulante 512, 1024, 2048, 4096, 8192)
+            - hop_length (defaut 512, proposer 128, 256, 512, 1024, 2048,4096)
+        D = np.abs(librosa.stft(audio_file, n_fft = n_fft, hop_length = hop_length))
+        DB = librosa.amplitude_to_db(D, ref = np.max)
+        plt.figure(figsize = (16, 6))
+        # librosa.display.specshow(DB, sr = sr, hop_length = hop_length, x_axis = 'time', y_axis = 'log',
+        #                         cmap = 'cool')
+        librosa.display.specshow(DB, sr = sr, hop_length = hop_length, x_axis = 'time', y_axis = 'log',
+                                cmap = 'inferno')
+        plt.colorbar();
+
+colonne 2 au milieu : 
+    - un cadre select model : 
+        - texte : "model" a gauche
+        - a droite : une liste deroulante pointant sur un serveur MLflow adresse encore inconnue
+        qui va selectionner 'model_name'
+    - un cadre 'load your music':
+        - une liste deroulante pour selectionner un fichier dans un repertoire de la machine
+        - un bouton load
+        - un bouton play comme en colonne 1 
+         il y a un pretraitement de notre signal chargé: 
+         - ne garder que les 3 premieres secondes apres le silence du debut du signal
+         - resample at fs=22500 Hz
+         - normalise at rms amplitude (utiliser librosa)
+         - une routine calcule :
+            - les features 
+            - le spectrogramme avec librosa (n_fft=2048 ; hop_length=512 ) 
+            et une image spect:
+                spect = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=2048, hop_length=512)
+                spect = librosa.power_to_db(spect, ref=np.max)
+                spect.resize(128,660, refcheck=False)
+
+            et envoie tout cela a une api : api_music_predict avec un request.get 
+            et recupere model.predict(model_name,features, spect)  
+
+    - un cadre 'predicted genre:
+        un texte a gauche : "predicted genre:"
+        un cadre : variable predicted_genre
+    - un cadre de visu pour le signal chargé comme en colonne1:
+        -- visu du temporel a partir du fichier avec la commande 
+        -- visu du spectrogramme avec les parametres selectionnés en colonne 1 
+colonne 3 : 
+    - un cadre 'recommandations' qui va proposer :
+        texte : 'similar to : ' a gauche 
+        un choix a 2 entrees 'database choice' ou 'my music' 
+        
+        une liste deroulante permettant de selectionner 'recommend' parmi : 
+            4 voisins de la database dans le meme genre musical : 
+                - si 'database choice' : de la musique selectionnée en colonne 1 
+                - si 'my_music' : de la musique chargee en colonne 2 
+    
+        (les voisins sont selectionnes selon une metrique de proximité dans un dataframe PCA 
+        qui se trouve : dans /dataset/Data/PCA issu de la commande :
+            pca = PCA(n_components=3)
+            principalComponents = pca.fit_transform(X)
+            principalDf = pd.DataFrame(data = principalComponents, columns = ['principal component 1', 'principal component 2'])
+            ) 
+        - un bouton play pour ecouter la selection
+
+    - un cadre visu avec 2 onglets : 
+        - onglet 'plot' 
+            montre :
+            -- visu du temporel du fichier 'recommend' 
+            -- visu du spectrogramme avec les parametres selectionnés en colonne 1
+        - onglet 'Principal component' : 
+            - affiche le graphique PCA en 3 dimensions comme : 
+            sns.3Dscatterplot(x = "principal component 1", y = "principal component 2",z="principal component 3",
+             data = finalDf, hue = "label", alpha = 0.7,
+               s = 100); 
+               le graphque affiche en surbrillance :
+               - la selection de colonne 1 : en rouge 
+               - 'my_music' : en bleu , dont on aura calculé les coordonnées dans le repere des PCA   
+
+               il permet aussi d'afficher en infosbulles des points (nom du morceau et genre) et de selectionner un morceau 
+               en remplacant par ce morceau la selection de la colonne 1 
+               (et ainsi les graphes colonne 1 sont rafraichis) 
+                

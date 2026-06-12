@@ -1,2 +1,5 @@
 .env
 .DS_Store
+./deploiement_MVP/.secret
+./deploiement_MVP/MLFlow/.env
+.env
