@@ -1,0 +1,14 @@
+#backend NeonDB of Cyril:
+# credentals AWS : 
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_DEFAULT_REGION=eu-west-3
+ARTIFACT_ROOT=s3://music-classification-project2/music-database/
+
+AWS_BUCKET=music-classification-project2
+MLFLOW_URI=https://cyrilbrg-mlflow-music.hf.space/
+API_URL=http://localhost:8000/
+#API_URL=https://cyrilbrg-api-music-model-f.hf.space/
+PORT=4000
+
+API_MODEL_CNN_URL=https://dareindodo-api-dl-predict.hf.space/

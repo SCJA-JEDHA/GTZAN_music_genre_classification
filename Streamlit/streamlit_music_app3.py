@@ -2,6 +2,7 @@
 Application Streamlit - Analyse & Classification Musicale
 Prédiction de genre musical via MLflow + recommandations PCA
 """
+# developped in streamlit==1.58.0
 # to launch the streamlit in local : 
 # streamlit run .\streamlit_music_app3.py --server.runOnSave true --logger.level=debug
 
