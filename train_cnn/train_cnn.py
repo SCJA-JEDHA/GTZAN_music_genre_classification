@@ -1,8 +1,6 @@
 # Importation des bibliothèques #######
 from calendar import EPOCH
 import torch
-import torch.nn as nn
-from torch.optim import adamw
 from torchinfo import summary
 import torchvision.transforms.v2 as transforms
 from torchvision import datasets
@@ -25,7 +23,6 @@ import mlflow
 import mlflow.pytorch
 from sklearn.metrics import ConfusionMatrixDisplay, f1_score
 import datetime
-import matplotlib
 from torchviz import make_dot
 import argparse
 import subprocess
@@ -298,6 +295,99 @@ class CNN_AudioSpectral(nn.Module):
         x = self.classifier(x)
         return x
 ###
+# Classe CNN : Le réseau de neurones ###
+class CNN_AudioSpectralV2(nn.Module):
+    def __init__(self, num_classes=10):
+        super(CNN_AudioSpectralV2, self).__init__()
+        # BLOC CONV (FEATURES)
+        self.features = nn.Sequential(
+            # CONV1
+            nn.Conv2d(2, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            # CONV2
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            # CONV3
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            # CONV4
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+        )
+        # FLATTEN
+        self.flatten_size = 256 * 8 * 16
+        # LE CLASSIFIER AVEC FCL
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            # FCL1
+            nn.Linear(self.flatten_size, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            # FCL2
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            # CFCL FINALE
+            nn.Linear(256, num_classes)
+        )
+    # Forward
+    def forward(self, x):
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
+###
+# Classe CNN : Le réseau de neurones ###
+class CNN_AudioSpectralV3(nn.Module):
+    def __init__(self, num_classes=10):
+        super(CNN_AudioSpectralV3, self).__init__()
+        # BLOC CONV (FEATURES)
+        self.features = nn.Sequential(
+            # CONV1
+            nn.Conv2d(2, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            # CONV2
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            # CONV3
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+        )
+        # FLATTEN
+        self.flatten_size = 256 * 16 * 32
+        # LE CLASSIFIER AVEC FCL
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            # FCL1
+            nn.Linear(self.flatten_size, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            # FCL2
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            # CFCL FINALE
+            nn.Linear(256, num_classes)
+        )
+    # Forward
+    def forward(self, x):
+        x = self.features(x)
+        x = self.classifier(x)
+        return x
+###
 #
 # Classe ModelCheckpoint : Vérification pour l'early stopping et la sauvegarde du modèle
 class ModelCheckpoint:
@@ -325,8 +415,10 @@ class ModelCheckpoint:
             print("First save")
             return False
         # On reset le compteur de patience si on acquiet un meilleur val_score
-        if (self.mode == "min" and val_score < self.best_score - self.min_delta) or \
-            (self.mode == "max" and val_score > self.best_score - self.min_delta):
+        if (self.mode == "min" and val_score < (self.best_score - self.min_delta)) or \
+            (self.mode == "max" and val_score > (self.best_score + self.min_delta)) or \
+            (self.mode == "diff" and val_score <= 0.2) or \
+            (self.mode == "none" and val_score == self.best_score):
             self.best_score = val_score
             self.count = 0
             torch.save(model.state_dict(), self.filepath)
@@ -334,13 +426,14 @@ class ModelCheckpoint:
             return False
         # Si le score n'est pas meilleur aon augmente le count et s'il dépasse la patience on retoune True pour que l'entrainement déclenche l'early stopping
         else:
+            print(f"{self.count}   ")
             self.count += 1
             if self.count >= self.patience:
                 self.early_stop = True
             return self.early_stop 
 ###
 #
-###
+### --lr=1e-5
 # Classe ImageDataset : Création de dataset spécialisé permettant de préparer une paire de tenseurs (harmonique, percussif) avec un label associé pour l'entrainement
 class ImageDataset(Dataset):
     # Initialisation avec le dataset fourni et les transformations définies (les transformorations doivent être les mêmes pour les deux images)
@@ -425,22 +518,39 @@ def train_process(
     epochs:int=200, 
     patience:int=7) -> dict:
 
-    mycallback_acc = ModelCheckpoint(
-        filepath = "best_model_gtzan.pth",
-        patience = patience,
-        min_delta = 0.01,
-        mode = "max"
-    )
+    d_early_stop = {
 
-    mycallback_loss = ModelCheckpoint(
-        filepath = "best_model_gtzan.pth",
-        patience = patience,
-        min_delta = 0.001,
-        mode = "min"
-    )
+        "min": ModelCheckpoint(
+            filepath = "best_model_gtzan.pth",
+            patience = patience,
+            min_delta = 0.001,
+            mode = "min"
+        ),
+
+        "max" : ModelCheckpoint(
+            filepath = "best_model_gtzan.pth",
+            patience = patience,
+            min_delta = 0.01,
+            mode = "max"
+        ),
+
+        "diff" : ModelCheckpoint(
+            filepath = "best_model_gtzan.pth",
+            patience = patience,
+            mode = "diff"
+        ),
+
+        "none" : ModelCheckpoint(
+            filepath = "best_model_gtzan.pth",
+            patience = patience,
+            mode = "none"
+        )
+    }
+
+    mycallback = d_early_stop[EARLY_STOP]
 
     # Dictionaire permettant de mémoriser la train_loss, val_loss, train_acc, val_acc
-    d_history = {'loss': [], 'val_loss': [], 'accuracy': [], 'val_accuracy': []}
+    d_history = {'loss': [], 'val_loss': [], 'accuracy': [], 'val_accuracy': [], 'diff_loss' : []}
     # Sécurité pour ne pas descendre à un loss nulle
     min_loss_threshold = 1e-5 
 
@@ -490,7 +600,7 @@ def train_process(
             val_loss /= len(val_loader)
             val_acc = val_correct / len(val_loader.dataset)
 
-        diff_loss = train_loss - val_loss
+        diff_loss = val_loss - train_loss
 
         # Enregistrement des métriques d'entrainement dans MLFLOW
         mlflow.log_metric("train_loss", train_loss, step=epoch)
@@ -509,18 +619,23 @@ def train_process(
         # Step du scheduler : si définit, le scheduler va executer une opération supplémentaire sur le LR en fonction de la surveillance d'entrainement
         #scheduler.step(val_loss)
         
-        # Surveillance early stop sur la val_accuracy : si elle n'augment plus passé un délais de patience, on arrête l'entrainement
-        if mycallback_acc(model, val_acc):
+        if EARLY_STOP == "min":
+            score_to_send = val_loss
+        elif EARLY_STOP == "max":
+            score_to_send = val_acc
+        elif EARLY_STOP == "diff":
+            score_to_send = diff_loss
+        else:
+            score_to_send = 1
+        
+        # Surveillance early stop sur la val_loss : si elle ne descend plus passé un délais de patience, on arrête l'entrainement
+        if mycallback(model, score_to_send):
             print(f"Early stopping à l'époque {epoch}")
             break
-        # Surveillance early stop sur la val_loss : si elle ne descend plus passé un délais de patience, on arrête l'entrainement
-        """if mycallback_loss(model, val_loss):
-            print(f"Early stopping à l'époque {epoch}")
-            break"""
 
         # Affichage de l'amélioration
-        print(f"\rEpoch [{epoch+1}/{epochs}], Loss: {train_loss:.4f}, Acc: {train_acc:.4f}, "
-                f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f} Diff Loss {diff_loss:.4f}", end="")
+        print(f"\nEpoch [{epoch+1}/{epochs}], Loss: {train_loss:.4f}, Acc: {train_acc:.4f}, "
+                f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f} Diff Loss {diff_loss:.4f}         ", end = "")
 
     return d_history
 ###
@@ -586,14 +701,15 @@ if __name__ == "__main__":
     parser.add_argument("--random_state", type=int, default=42)
     parser.add_argument("--test_size", type=float, default=0.2)
     parser.add_argument("--val_size", type=float, default=0.2)
-    parser.add_argument("--experiment-name", type=str, default="audio_classifier")
-    parser.add_argument("--model-name", type=str, default="audio_classifier")
-    parser.add_argument("--model-version", type=str, default="v1")
+    parser.add_argument("--experiment_name", type=str, default="audio_classifier")
+    parser.add_argument("--model_name", type=str, default="audio_classifier")
+    parser.add_argument("--model_version", type=str, default="v1")
     parser.add_argument("--optimizer_name", type=str, default="AdamW")
     parser.add_argument("--n_epochs", type=int, default=200)
     parser.add_argument("--filepath", type=str, default="best_model_gtzan.pth")
     parser.add_argument("--mlflow_model_name", type=str, default="baseline_cnn_audio_classifier")
     parser.add_argument("--patience", type=int, default=7)
+    parser.add_argument("--early_stop", type=str, default="min")
     args = parser.parse_args()
 
     # Récupération des arguments
@@ -612,12 +728,15 @@ if __name__ == "__main__":
     FILEPATH = args.filepath
     PATIENCE = args.patience
     MLFLOW_MODEL_NAME = args.mlflow_model_name
+    EARLY_STOP=args.early_stop
 
     # Dictionnaire des modèle pour adresser un paramètre de modèle spécifique
     # Si on souhaite créer une autre classe de nn, on ajoute la classe dans l'espace dessus
     # puis on l'ajoute au dictionnaire pour qu'il soit pris en compte dans les paramètres
     d_model_version = {
-        "v1" : CNN_AudioSpectral(num_classes=NUM_CLASSES)
+        "v1" : CNN_AudioSpectral(num_classes=NUM_CLASSES),
+        "v2" : CNN_AudioSpectralV2(num_classes=NUM_CLASSES),
+        "v3" : CNN_AudioSpectralV3(num_classes=NUM_CLASSES)
     }
 
     # Vérification de l'existence du répertoire et récupération si non présent
@@ -757,16 +876,19 @@ if __name__ == "__main__":
 
         # Création de CMD #####
         class_names = list(mapping_LI.keys())
-        fig, ax = plt.subplots(figsize=(75, 5))
+        fig, ax = plt.subplots(figsize=(10, 8))
         disp = ConfusionMatrixDisplay.from_predictions(
             Y_true, 
             Y_pred, 
-            display_labels=class_names, 
+            display_labels=class_names,
+            normalize="true",
+            colorbar = "false",
             cmap='Blues', 
             xticks_rotation=45,
+            values_format=".0%",
             ax=ax
         )
-        plt.title("Matrice de confusion de test de l'audio_classifier")
+        plt.title("Matrice de confusion de test du CNN")
         # LOG MLFLOW CMD
         mlflow.log_figure(fig, "confusion_matrix_audio_classifier_cnn.png")
         #####
