@@ -3,6 +3,10 @@ MusicAI — Analyse & Classification de Genre Musical
 Streamlit app : sélection base GTZAN, upload audio, prédiction SVM + CNN,
 recommandations PCA et visualisations waveform / spectrogramme.
 """
+# developped in streamlit==1.58.0
+# to launch the streamlit in local : 
+# streamlit run .\streamlit_music_app3.py --server.runOnSave true --logger.level=debug
+
 import io
 import requests
 import numpy as np
@@ -370,7 +374,7 @@ def call_predict_api(list_features_obj: list) -> str:
     try:
         resp = requests.post(API_URL + 'predict_f', json=payload_f, timeout=65)
         resp.raise_for_status()
-        return resp.json()["prediction"][0]
+        return resp.json()["prediction"]
     except Exception as e:
         return f"Erreur API : {e}"
 
