@@ -1,0 +1,31 @@
+# requirements pour train CNN avec torchaudio
+# Data Manipulation and Analysis
+numpy>=1.24.3
+pandas>=1.5.3
+scikit-learn>=1.2.2
+ipykernel
+ipywidgets
+
+# Deep Learning (PyTorch Ecosystem)
+torch>=2.0.1
+torchvision>=0.15.2
+torchaudio>=2.0.2
+torchinfo>=1.7.0
+torchviz>=0.0.2
+
+# Audio and Image Processing
+librosa>=0.10.0
+Pillow>=9.5.0
+
+# Visualization
+matplotlib>=3.7.1
+seaborn>=0.12.2
+plotly>=5.15.0
+
+# MLOps and Cloud
+mlflow>=2.4.1
+boto3>=1.26.0
+python-dotenv>=1.0.0
+
+# Utilities
+requests>=2.31.0

@@ -374,7 +374,7 @@ def call_predict_api(list_features_obj: list) -> str:
     try:
         resp = requests.post(API_URL + 'predict_f', json=payload_f, timeout=65)
         resp.raise_for_status()
-        return resp.json()["prediction"]
+        return resp.json()["prediction"][0]     # take first element of list 
     except Exception as e:
         return f"Erreur API : {e}"
 
@@ -549,7 +549,12 @@ def _run_prediction():
     feats = st.session_state.my_features
     spect = compute_melspectrogram(st.session_state.my_y, st.session_state.my_sr)
     pred1 = call_predict_api([feats, spect])
+    #pred1_int = int(pred1)  # Conversion de la chaîne en entier
+    print(f"pred1: {pred1}")
+    print(f"type: {type(pred1)}")
+    
     st.session_state.predicted_genre_feat = revert_pred(pred1)
+    #st.session_state.predicted_genre_feat = revert_pred(pred1)
     pred_CNN = call_predict_api_CNN(st.session_state.my_payload_spectro)
     st.session_state.predicted_genre_CNN  = revert_pred(pred_CNN)
     st.session_state.predicted_genre      = st.session_state.predicted_genre_CNN
