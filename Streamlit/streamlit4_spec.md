@@ -87,3 +87,17 @@ Credentials S3 (via ~/.aws/credentials, profil, ou variables d'env — boto3.cli
 
 Si tu montes en charge (plusieurs utilisateurs simultanés), l'étape suivante serait de déporter extraction/classification/upload dans un worker (Celery/RQ) et faire pointer Streamlit sur un polling de statut plutôt que de bloquer dans le thread principal — mais pour un usage mono-utilisateur ce pattern threadpool + cache suffit largement.
 voir le fichier streamlit_music_batch.py dans /docs_projet
+
+
+
+version avec thread ; demande de modifs :
+propose moi une nouvelle version intégrant les modifications suivantes :
+
+affiche dans les messages sur le traitement de la table des infos sur l'action en cours 
+mettre la ligne selectionnée en moins foncee on ne lit plus le texte; la mettre en gris clair
+fixer les largeurs des colonnes genre pour qu'on voie toutes les colonnes dans la grille 
+afficher genre pred 1 genre pred 2 
+la reco pour my_music ne fonctionne pas : prendre dans l'ordre genre_user, genre_CNN , puis genre_feature pour chercher les musiques les plus proches
+le bouton play devrait jouer directement la musique plutot que juste afficher la barre avec le play dedans
+mettre le son par defaut a 50 % (avec un nom de constante ) et conserver en memoire le niveau réglé au play précédent
+quand on save database, garder le nom du user en memoire  
