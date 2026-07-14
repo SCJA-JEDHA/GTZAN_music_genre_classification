@@ -2,4 +2,4 @@
 .DS_Store
 ./deploiement_MVP/.secret
 ./deploiement_MVP/MLFlow/.env
-.env
+.env_copy
