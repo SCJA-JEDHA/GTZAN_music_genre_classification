@@ -90,7 +90,7 @@ voir le fichier streamlit_music_batch.py dans /docs_projet
 
 
 
-version avec thread ; demande de modifs :
+version avec thread ; demande de modifs 1:
 propose moi une nouvelle version intégrant les modifications suivantes :
 
 affiche dans les messages sur le traitement de la table des infos sur l'action en cours 
@@ -101,3 +101,7 @@ la reco pour my_music ne fonctionne pas : prendre dans l'ordre genre_user, genre
 le bouton play devrait jouer directement la musique plutot que juste afficher la barre avec le play dedans
 mettre le son par defaut a 50 % (avec un nom de constante ) et conserver en memoire le niveau réglé au play précédent
 quand on save database, garder le nom du user en memoire  
+
+=> commit streamlit4 mod1
+
+efface 
