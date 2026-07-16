@@ -104,4 +104,12 @@ quand on save database, garder le nom du user en memoire
 
 => commit streamlit4 mod1
 
-efface 
+efface la reglette volume ajoutee ; mets le volume 50% sur le reglage de la reglette play 
+quand on save, la liste est effacée, et les affichages de la forme d'onde et  spectrogrammes doivent etre effacés
+ 
+
+quand on play le 2eme morceau : plus de son 
+
+quand on save la session il n'y a pas de data ds le fichier 
+si on save la meme session plusieurs fois, pb d'ecrasement du fichier 
+

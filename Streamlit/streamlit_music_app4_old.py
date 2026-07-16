@@ -10,6 +10,7 @@ recommandations PCA et visualisations waveform / spectrogramme.
 import io
 import requests
 import concurrent.futures as cf
+import queue
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -79,6 +80,7 @@ SPECTRO_CSV_PREFIX     = MUSIC_USER_PREFIX + "spectro/"       # 1 CSV catalogue 
 FEATURES_USER_MERGED_CSV = MUSIC_USER_PREFIX + "features_music_user.csv"  # fusion de tous les CSV /features
 SPECTRO_USER_MERGED_CSV  = MUSIC_USER_PREFIX + "spectro_music_user.csv"   # fusion de tous les CSV /spectro
 BATCH_MAX_WORKERS = 4   # nb de fichiers analysés en parallèle (threads I/O-bound : appels API)
+DEFAULT_VOLUME_PCT = 50 # volume de lecture par défaut (%)
 
 
 # HELPERS — AUDIO
@@ -428,19 +430,32 @@ def _save_b64_png(b64_str: str, path: Path) -> None:
 def _remaining_slots() -> int:
     return N_MUSIC_FILES - len(st.session_state.df_user_music_temp)
 
-def _analyze_one_file(name: str, tmp_dir: Path, out_dir: Path) -> dict:
+def _effective_genre(row: pd.Series) -> str:
+    """Genre à utiliser pour la recherche des musiques les plus proches.
+    Priorité : genre_user (validé par l'utilisateur) > genre_pred_CNN > genre_pred_feat."""
+    for col in ("genre_user", "genre_pred_CNN", "genre_pred_feat"):
+        val = row.get(col)
+        if pd.notna(val) and val in LIST_GENRES:
+            return val
+    return "—"
+
+def _analyze_one_file(name: str, tmp_dir: Path, out_dir: Path, status_q: "queue.Queue") -> dict:
     """
     Traitement complet d'UN fichier, conçu pour tourner dans un thread :
     - aucun appel st.* / session_state ici (non thread-safe) -> tout est retourné dans un dict,
       écrit dans session_state par le thread principal.
     - les 2 appels API (features / CNN) sont indépendants -> lancés en parallèle en interne.
+    - status_q reçoit des messages texte consommés par le thread principal pour la barre de progression.
     """
+    status_q.put(f"{name} : chargement audio…")
     y_raw, sr_raw = librosa.load(str(tmp_dir / name), sr=None)
     y_seg, sr_seg = preprocess_and_extract_segment(y_raw, sr_raw)
 
+    status_q.put(f"{name} : calcul des features + spectrogrammes…")
     feats_df = compute_features(y_seg, sr_seg)
     payload_spectro, _ = calcul_image_pour_CNN(y_seg, sr_seg)
 
+    status_q.put(f"{name} : appel API model_features + model-CNN…")
     with cf.ThreadPoolExecutor(max_workers=2) as api_pool:
         fut_feat = api_pool.submit(call_predict_api, [feats_df])
         fut_cnn  = api_pool.submit(call_predict_api_CNN, payload_spectro)
@@ -450,6 +465,7 @@ def _analyze_one_file(name: str, tmp_dir: Path, out_dir: Path) -> dict:
     genre_feat = revert_pred(pred_feat) if isinstance(pred_feat, (int, np.integer)) else pred_feat
     genre_cnn  = revert_pred(pred_cnn) if isinstance(pred_cnn, (int, np.integer)) else pred_cnn
 
+    status_q.put(f"{name} : génération des spectrogrammes PNG…")
     stem = Path(name).stem
     harmo_path = out_dir / f"{stem}_harmo.png"
     percu_path = out_dir / f"{stem}_percu.png"
@@ -460,6 +476,7 @@ def _analyze_one_file(name: str, tmp_dir: Path, out_dir: Path) -> dict:
     disp_path = out_dir / f"{stem}_spectrog_affichage.png"
     disp_path.write_bytes(disp_spect_png)
 
+    status_q.put(f"{name} : terminé ✓")
     return {
         "name": name, "y_seg": y_seg, "sr_seg": sr_seg,
         "feats_df": feats_df,
@@ -508,55 +525,68 @@ def _process_loaded_files(files: list) -> None:
     n_files = len(new_names)
     progress = st.progress(0.0, text=f"Analyse de {n_files} fichier(s)…")
     done = 0
+    status_q: "queue.Queue[str]" = queue.Queue()
+    last_status = ""
 
     # les fichiers sont soumis en une fois -> pendant l'attente des 2 appels API d'un fichier,
     # les autres fichiers avancent en parallèle (preprocessing + leurs propres appels API)
     with cf.ThreadPoolExecutor(max_workers=min(BATCH_MAX_WORKERS, n_files)) as pool:
-        futures = {pool.submit(_analyze_one_file, name, tmp_dir, out_dir): name for name in new_names}
+        futures = {pool.submit(_analyze_one_file, name, tmp_dir, out_dir, status_q): name for name in new_names}
+        pending = set(futures)
 
-        for future in cf.as_completed(futures):
-            name = futures[future]
-            try:
-                r = future.result()
-            except Exception as e:
-                st.error(f"Erreur lors de l'analyse de {name} : {e}")
+        while pending:
+            done_now, pending = cf.wait(pending, timeout=0.25, return_when=cf.FIRST_COMPLETED)
+
+            # affiche l'action en cours (dernier message publié par les threads), même sans fichier terminé
+            while not status_q.empty():
+                last_status = status_q.get_nowait()
+            if not done_now and last_status:
+                progress.progress(done / n_files, text=f"{done}/{n_files} — {last_status}")
+
+            for future in done_now:
+                name = futures[future]
+                try:
+                    r = future.result()
+                except Exception as e:
+                    st.error(f"Erreur lors de l'analyse de {name} : {e}")
+                    done += 1
+                    progress.progress(done / n_files, text=f"{done}/{n_files} — échec sur {name}")
+                    continue
+
+                # à partir d'ici : uniquement des écritures dans session_state, faites depuis le thread principal
+                idx = st.session_state.df_user_music_temp.index[
+                    st.session_state.df_user_music_temp["name"] == r["name"]][0]
+                st.session_state.df_user_music_temp.loc[idx, "genre_pred_feat"] = r["genre_feat"]
+                st.session_state.df_user_music_temp.loc[idx, "genre_pred_CNN"]  = r["genre_cnn"]
+
+                feats_row = r["feats_df"].copy()
+                feats_row["user_name"]  = st.session_state.user_name
+                feats_row["date_heure"] = st.session_state.date_heure_load
+                feats_row["session_id"] = st.session_state.session_id
+                st.session_state.features_user_temp = pd.concat(
+                    [st.session_state.features_user_temp, feats_row], ignore_index=True
+                )
+
+                st.session_state.spectro_user = pd.concat([
+                    st.session_state.spectro_user,
+                    pd.DataFrame([{"name": r["name"], "spectro_percu": r["percu_path"],
+                                    "spectro_harmo": r["harmo_path"]}])
+                ], ignore_index=True)
+
+                st.session_state.batch_display_spectro_cache[r["name"]] = r["disp_spect_png"]
+                st.session_state.batch_audio_cache[r["name"]] = (r["y_seg"], r["sr_seg"])
+                st.session_state.batch_features_cache[r["name"]] = r["feats_df"]
+
+                if not first_row_highlighted:
+                    st.session_state.active_row_idx = idx
+                    first_row_highlighted = True
+
                 done += 1
-                progress.progress(done / n_files, text=f"{done}/{n_files} analysés")
-                continue
-
-            # à partir d'ici : uniquement des écritures dans session_state, faites depuis le thread principal
-            idx = st.session_state.df_user_music_temp.index[
-                st.session_state.df_user_music_temp["name"] == r["name"]][0]
-            st.session_state.df_user_music_temp.loc[idx, "genre_pred_feat"] = r["genre_feat"]
-            st.session_state.df_user_music_temp.loc[idx, "genre_pred_CNN"]  = r["genre_cnn"]
-
-            feats_row = r["feats_df"].copy()
-            feats_row["user_name"]  = st.session_state.user_name
-            feats_row["date_heure"] = st.session_state.date_heure_load
-            feats_row["session_id"] = st.session_state.session_id
-            st.session_state.features_user_temp = pd.concat(
-                [st.session_state.features_user_temp, feats_row], ignore_index=True
-            )
-
-            st.session_state.spectro_user = pd.concat([
-                st.session_state.spectro_user,
-                pd.DataFrame([{"name": r["name"], "spectro_percu": r["percu_path"],
-                                "spectro_harmo": r["harmo_path"]}])
-            ], ignore_index=True)
-
-            st.session_state.batch_display_spectro_cache[r["name"]] = r["disp_spect_png"]
-            st.session_state.batch_audio_cache[r["name"]] = (r["y_seg"], r["sr_seg"])
-            st.session_state.batch_features_cache[r["name"]] = r["feats_df"]
-
-            if not first_row_highlighted:
-                st.session_state.active_row_idx = idx
-                first_row_highlighted = True
-
-            done += 1
-            progress.progress(done / n_files, text=f"{done}/{n_files} analysés")
-            liste_ph.dataframe(st.session_state.df_user_music_temp, hide_index=True, width='stretch')
+                progress.progress(done / n_files, text=f"{done}/{n_files} analysés — dernier : {r['name']}")
+                liste_ph.dataframe(st.session_state.df_user_music_temp, hide_index=True, width='stretch')
 
     progress.empty()
+
 
 def _play_active_row() -> None:
     idx = st.session_state.active_row_idx
@@ -571,7 +601,9 @@ def _play_active_row() -> None:
         y_seg, sr = preprocess_and_extract_segment(y_raw, sr_raw)
 
     buf = io.BytesIO()
-    sf.write(buf, y_seg, sr, format="WAV")
+    volume = st.session_state.playback_volume_pct / 100.0
+    y_out = np.clip(y_seg * volume, -1.0, 1.0).astype(np.float32)
+    sf.write(buf, y_out, sr, format="WAV")
     st.session_state.batch_play_audio = buf.getvalue()
     st.session_state.fig_batch_wave = _fig_to_png(fig_waveform(_y_bytes(y_seg), sr, f"Forme d'onde — {name}"))
 
@@ -594,8 +626,7 @@ def _play_active_row() -> None:
     st.session_state.my_y  = y_seg
     st.session_state.my_sr = sr
     st.session_state.my_features = st.session_state.batch_features_cache.get(name)
-    genre_cnn_row = df.iloc[idx]["genre_pred_CNN"]
-    st.session_state.predicted_genre = genre_cnn_row if genre_cnn_row in LIST_GENRES else "—"
+    st.session_state.predicted_genre = _effective_genre(df.iloc[idx])
 
 def _save_tagged_rows() -> None:
     """Envoie les fichiers taggués vers S3 (segment 30s + features + spectrogrammes + catalogues CSV par session), purge la liste."""
@@ -705,7 +736,9 @@ def _save_tagged_rows() -> None:
     st.session_state["_active_played"] = False
     st.session_state.load_locked     = False   # au moins un fichier sauvé -> [load] réactivable
     st.session_state.batch_play_audio = None
-    st.success(f"{len(names_transfer)} fichier(s) sauvegardé(s) sur S3.")
+    # NB : st.session_state.user_name (clé du text_input) n'est volontairement pas touché ici,
+    # afin que le nom saisi reste renseigné pour les prochains chargements de la même session.
+    st.success(f"{len(names_transfer)} fichier(s) sauvegardé(s) sur S3 (utilisateur : {st.session_state.user_name}).")
 
 
 def merge_session_csvs(s3_client, prefix: str, merged_key: str) -> int:
@@ -925,6 +958,7 @@ _defaults = {
     "batch_features_cache": {},
     "batch_display_spectro_cache": {},
     "batch_play_audio": None,
+    "playback_volume_pct": DEFAULT_VOLUME_PCT,
     "fig_batch_wave": None,
     "fig_batch_spect": None,
     "_active_played": False,
@@ -992,13 +1026,19 @@ def _render_liste_music():
 
     def _highlight(row):
         if row.name == active_idx:
-            return ['background-color:#3b2f6b'] * len(row)
+            return ['background-color:#e0e0e0; color:#111111'] * len(row)
         return [''] * len(row)
 
     st.dataframe(
         df.style.apply(_highlight, axis=1),
         height=int((min(len(df), M_DISPLAY_ROWS) + 1) * 35 + 3),
         width='stretch', hide_index=True,
+        column_config={
+            "name":            st.column_config.TextColumn("Fichier", width="medium"),   # ≈ 15 caractères
+            "genre_pred_feat": st.column_config.TextColumn("Genre (feat.)", width="small"),  # ≈ 8 caractères
+            "genre_pred_CNN":  st.column_config.TextColumn("Genre (CNN)",   width="small"),
+            "genre_user":      st.column_config.TextColumn("Genre (user)",  width="small"),
+        },
     )
 
     if 0 <= active_idx < len(df):
@@ -1020,6 +1060,7 @@ def _render_liste_music():
             if st.button("✔ Valider", key=f"btn_valider_genre_{active_idx}_{st.session_state.session_id}",
                           disabled=not played, width='stretch'):
                 st.session_state.df_user_music_temp.loc[active_idx, "genre_user"] = genre_choice
+                st.session_state.predicted_genre = _effective_genre(st.session_state.df_user_music_temp.loc[active_idx])
                 st.rerun()
 
         current_tag = st.session_state.df_user_music_temp.loc[active_idx, "genre_user"]
@@ -1076,7 +1117,8 @@ def _ctrl_my():
     _render_liste_music()
 
     if st.session_state.batch_play_audio:
-        st.audio(st.session_state.batch_play_audio, format="audio/wav")
+        st.slider("🔊 Volume", 0, 100, key="playback_volume_pct")
+        st.audio(st.session_state.batch_play_audio, format="audio/wav", autoplay=True)
 
 
 # RANGÉE HAUTE COL 3 — Recommandations
