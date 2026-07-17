@@ -22,6 +22,8 @@ AWS_REGION = "eu-west-3"
 
 @pytest.mark.timeout(60)
 def test_app_loads_without_exception():
+    print(f"path de tests/test_smoke_apptest.py {Path(__file__).resolve()}")
+    print(f"APP_PATH: {APP_PATH}")
     if not Path(APP_PATH).exists():
         pytest.skip(f"Fichier app introuvable : {APP_PATH} (ajuste STREAMLIT_APP_PATH)")
 
@@ -37,6 +39,8 @@ def test_app_loads_without_exception():
 @pytest.mark.timeout(60)
 def test_volume_slider_widget_absent():
     """Régression bug #1 : le widget slider volume ne doit plus apparaître dans l'UI."""
+    if not Path(APP_PATH).exists():
+        pytest.skip(f"Fichier app introuvable : {APP_PATH} (ajuste STREAMLIT_APP_PATH)")
     with mock_aws():
         boto3.client("s3", region_name=AWS_REGION).create_bucket(Bucket=TEST_BUCKET,
                              CreateBucketConfiguration={"LocationConstraint": AWS_REGION}
