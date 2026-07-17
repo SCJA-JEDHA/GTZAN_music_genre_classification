@@ -2,6 +2,11 @@ name: Sync streamlit vers HF Space
 
 on:
   push:
+    branches: [main, dev, record_music_prod ]
+    paths:
+      - 'streamlit/**'
+
+  pull_request:
     branches: [main, dev]
     paths:
       - 'streamlit/**'
@@ -9,6 +14,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      STREAMLIT_APP_PATH: streamlit/streamlit_music_app4.py
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,15 +24,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Installer les dépendances
         run: |
           python -m pip install --upgrade pip
-          pip install -r streamlit/requirements.txt
-          pip install pytest
+          pip install -r tests/requirements-test.txt
+          # si l'app a son propre requirements.txt (déps de prod à jour), l'installer aussi :
+          if [ -f streamlit/requirements.txt ]; then pip install -r streamlit/requirements.txt; fi
 
       - name: Lancer les tests
-        run: pytest streamlit/ -v
+        run: pytest tests/ -v
 
   sync:
     needs: test
@@ -40,8 +49,8 @@ jobs:
       - name: Push vers le Space HuggingFace
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_USERNAME: cyrilbrg
-          SPACE_REPO: cyrilbrg/music_streamlit
+          HF_USERNAME: ${{secrets_HF_USERNAME}}
+          SPACE_REPO: ${{secrets.HF_STREAMLIT_SPACE_REPO}}
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
