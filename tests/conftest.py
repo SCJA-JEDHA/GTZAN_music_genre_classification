@@ -19,6 +19,8 @@ import pytest
 from moto import mock_aws
 import boto3
 
+AWS_REGION = "eu-west-3"
+
 # ── Chemin vers le script de l'app — À ADAPTER si l'arborescence du repo diffère ──
 APP_PATH = os.environ.get(
     "STREAMLIT_APP_PATH",
@@ -49,8 +51,10 @@ def _env(monkeypatch):
 def s3_mock():
     """Bucket S3 en mémoire (moto) avec le bucket de test déjà créé."""
     with mock_aws():
-        client = boto3.client("s3", region_name="eu-west-3")
-        client.create_bucket(Bucket=TEST_BUCKET)
+        client = boto3.client("s3", region_name=AWS_REGION)
+        client.create_bucket(Bucket=TEST_BUCKET,
+                             CreateBucketConfiguration={"LocationConstraint": AWS_REGION},
+                             )
         yield client
 
 
