@@ -50,6 +50,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Debug arborescence
+        run: |
+          echo "Branche/ref: ${{ github.ref }}"
+          echo "SHA: ${{ github.sha }}"
+          pwd
+          ls -la
+          git ls-tree -d --name-only HEAD
+          pwd
+          ls -la
+          find . -maxdepth 3 -type d -iname "*streamlit*"
+
       - name: Push vers le Space HuggingFace
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

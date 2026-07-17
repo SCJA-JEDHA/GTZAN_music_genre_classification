@@ -1,0 +1,4 @@
+﻿59d2190 Added train_cnn.py
+:160000 000000 83eeb3d 0000000 D	deploiement_MVP/streamlit_deploy/streamlit_ex
+dbc1c8c lundi soir API_predict not working yet
+:000000 160000 0000000 83eeb3d A	deploiement_MVP/streamlit_deploy/streamlit_ex
