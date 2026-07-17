@@ -41,6 +41,7 @@ from typing import Tuple, Any
 
 load_dotenv()
 
+
 # CONFIG
 MLFLOW_URI        = os.getenv("MLFLOW_URI")
 API_URL           = os.getenv("API_URL")
