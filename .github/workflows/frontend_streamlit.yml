@@ -49,7 +49,7 @@ jobs:
       - name: Push vers le Space HuggingFace
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_USERNAME: ${{secrets_HF_USERNAME}}
+          HF_USERNAME: ${{secrets.HF_USERNAME}}
           SPACE_REPO: ${{secrets.HF_STREAMLIT_SPACE_REPO}}
         run: |
           git config user.name "github-actions"
