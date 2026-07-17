@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, dev, record_music_prod ]
     paths:
-      - 'streamlit/**'
+      - 'Streamlit/**'
       - '.github/workflows/**'
       - 'tests/**'
 
