@@ -18,7 +18,7 @@ APP_PATH = os.environ.get(
     str(Path(__file__).resolve().parent.parent / "streamlit" / "streamlit_music_app4.py"),
 )
 TEST_BUCKET = "test-bucket"
-
+AWS_REGION = "eu-west-3"
 
 @pytest.mark.timeout(60)
 def test_app_loads_without_exception():
@@ -36,7 +36,9 @@ def test_app_loads_without_exception():
 def test_volume_slider_widget_absent():
     """Régression bug #1 : le widget slider volume ne doit plus apparaître dans l'UI."""
     with mock_aws():
-        boto3.client("s3", region_name="us-east-1").create_bucket(Bucket=TEST_BUCKET)
+        boto3.client("s3", region_name=AWS_REGION).create_bucket(Bucket=TEST_BUCKET,
+                             CreateBucketConfiguration={"LocationConstraint": AWS_REGION}
+            )
         at = AppTest.from_file(APP_PATH, default_timeout=30)
         at.run()
         slider_labels = [s.label for s in at.slider]
