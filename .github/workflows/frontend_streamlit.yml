@@ -5,6 +5,7 @@ on:
     branches: [main, dev, record_music_prod ]
     paths:
       - 'streamlit/**'
+      - '.github/workflows/**'
 
   pull_request:
     branches: [main, dev]
