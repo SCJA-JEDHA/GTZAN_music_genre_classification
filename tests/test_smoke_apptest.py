@@ -15,7 +15,7 @@ from streamlit.testing.v1 import AppTest
 
 APP_PATH = os.environ.get(
     "STREAMLIT_APP_PATH",
-    str(Path(__file__).resolve().parent.parent / "streamlit" / "streamlit_music_app4.py"),
+    str(Path(__file__).resolve().parent.parent.parent / "streamlit" / "streamlit_music_app4.py"),
 )
 TEST_BUCKET = "test-bucket"
 AWS_REGION = "eu-west-3"
