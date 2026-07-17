@@ -6,11 +6,14 @@ on:
     paths:
       - 'streamlit/**'
       - '.github/workflows/**'
+      - 'tests/**'
 
   pull_request:
     branches: [main, dev]
     paths:
       - 'streamlit/**'
+      - '.github/workflows/**'
+      - 'tests/**'
 
 jobs:
   test:
