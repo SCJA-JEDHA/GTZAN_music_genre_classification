@@ -1,0 +1,21 @@
+FROM python:3.11
+
+RUN useradd -m -u 1000 user 
+# on ajoute un user nommé user pour pas etre en root , n° user =1000 
+# -m : create home directory ; -u : créer id num du user
+USER user
+ENV PATH="/home/user/.local/bin:$PATH"
+
+
+WORKDIR /app
+COPY --chown=user app.py app.py
+COPY --chown=user requirements2.txt requirements2.txt
+COPY app.py app.py
+
+RUN pip install -r requirements2.txt
+# EXPOSE 8501
+
+CMD streamlit run --server.port 7860 app.py
+    # la version alpine est souvent pas assez a jour et necessite plein d'install 
+    # docker build . -t streamlit_cont
+    # docker run -p 4000:7860 streamlit_cont
