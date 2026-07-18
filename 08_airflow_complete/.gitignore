@@ -1,0 +1,18 @@
+# Airflow runtime
+logs/*
+!logs/.gitkeep
+data/*
+!data/.gitkeep
+
+# Environnement
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

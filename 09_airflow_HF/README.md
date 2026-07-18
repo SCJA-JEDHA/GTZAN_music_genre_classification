@@ -1,10 +1,11 @@
 ---
-title: Streamlit Ex
+title: Airflow demo
 emoji: 👀
 colorFrom: red
 colorTo: yellow
 sdk: docker
 pinned: false
+app_port: 7860
 short_description: streamlit example
 ---
 

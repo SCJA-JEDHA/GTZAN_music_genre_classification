@@ -41,6 +41,7 @@ from typing import Tuple, Any
 
 load_dotenv()
 
+
 # CONFIG
 MLFLOW_URI        = os.getenv("MLFLOW_URI")
 API_URL           = os.getenv("API_URL")
@@ -154,9 +155,9 @@ def preprocess_signal(y, sr) -> tuple:
     )
     return y_clip, TARGET_SR
 
-def compute_features(y, sr) -> pd.DataFrame:
+def compute_features(y, sr, filename: str = 'user.file') -> pd.DataFrame:
     features, column_names = [], []
-    features.append('user.file'); column_names.append('filename')
+    features.append(filename); column_names.append('filename')
     features.append(len(y));      column_names.append('length')
 
     chroma             = librosa.feature.chroma_stft(y=y, sr=sr)
@@ -452,7 +453,7 @@ def _analyze_one_file(name: str, tmp_dir: Path, out_dir: Path, status_q: "queue.
     y_seg, sr_seg = preprocess_and_extract_segment(y_raw, sr_raw)
 
     status_q.put(f"{name} : calcul des features + spectrogrammes…")
-    feats_df = compute_features(y_seg, sr_seg)
+    feats_df = compute_features(y_seg, sr_seg, filename=name)
     payload_spectro, _ = calcul_image_pour_CNN(y_seg, sr_seg)
 
     status_q.put(f"{name} : appel API model_features + model-CNN…")
@@ -601,7 +602,7 @@ def _play_active_row() -> None:
         y_seg, sr = preprocess_and_extract_segment(y_raw, sr_raw)
 
     buf = io.BytesIO()
-    volume = st.session_state.playback_volume_pct / 100.0
+    volume = DEFAULT_VOLUME_PCT / 100.0
     y_out = np.clip(y_seg * volume, -1.0, 1.0).astype(np.float32)
     sf.write(buf, y_out, sr, format="WAV")
     st.session_state.batch_play_audio = buf.getvalue()
@@ -627,6 +628,25 @@ def _play_active_row() -> None:
     st.session_state.my_sr = sr
     st.session_state.my_features = st.session_state.batch_features_cache.get(name)
     st.session_state.predicted_genre = _effective_genre(df.iloc[idx])
+
+def _append_df_to_s3_csv(s3_client, bucket: str, key: str, df_new: pd.DataFrame) -> None:
+    """Ajoute df_new au CSV S3 `key` (lecture existant + concat + écriture). Ne jamais écraser :
+    si le fichier existe déjà, ses lignes sont préservées et les nouvelles y sont ajoutées."""
+    if df_new.empty:
+        return
+    try:
+        obj = s3_client.get_object(Bucket=bucket, Key=key)
+        df_existing = pd.read_csv(io.BytesIO(obj['Body'].read()))
+        df_out = pd.concat([df_existing, df_new], ignore_index=True)
+    except ClientError as e:
+        if e.response['Error']['Code'] in ('NoSuchKey', '404'):
+            df_out = df_new
+        else:
+            raise
+    csv_buf = io.StringIO()
+    df_out.to_csv(csv_buf, index=False)
+    s3_client.put_object(Bucket=bucket, Key=key, Body=csv_buf.getvalue())
+
 
 def _save_tagged_rows() -> None:
     """Envoie les fichiers taggués vers S3 (segment 30s + features + spectrogrammes + catalogues CSV par session), purge la liste."""
@@ -665,15 +685,7 @@ def _save_tagged_rows() -> None:
 
         # 3) append dans le CSV features de LA session (1 fichier par session_id -> pas de conflit inter-utilisateurs)
         feats_csv_key = f"{FEATURES_USER_PREFIX}features_{session_id}.csv"
-        try:
-            obj = s3c.get_object(Bucket=BUCKET, Key=feats_csv_key)
-            df_existing = pd.read_csv(io.BytesIO(obj['Body'].read()))
-            df_out = pd.concat([df_existing, feats_transfer], ignore_index=True)
-        except s3c.exceptions.NoSuchKey:
-            df_out = feats_transfer
-        csv_buf = io.StringIO()
-        df_out.to_csv(csv_buf, index=False)
-        s3c.put_object(Bucket=BUCKET, Key=feats_csv_key, Body=csv_buf.getvalue())
+        _append_df_to_s3_csv(s3c, BUCKET, feats_csv_key, feats_transfer)
 
         # 4) upload des spectrogrammes (fichiers image) correspondants
         spectro_transfer = spectro[spectro["name"].isin(names_transfer)].copy()
@@ -696,15 +708,7 @@ def _save_tagged_rows() -> None:
 
         # 6) append dans le CSV spectro de LA session
         spectro_csv_key = f"{SPECTRO_CSV_PREFIX}spectro_{session_id}.csv"
-        try:
-            obj = s3c.get_object(Bucket=BUCKET, Key=spectro_csv_key)
-            df_spectro_existing = pd.read_csv(io.BytesIO(obj['Body'].read()))
-            df_spectro_out = pd.concat([df_spectro_existing, spectro_user_temp_transfer], ignore_index=True)
-        except s3c.exceptions.NoSuchKey:
-            df_spectro_out = spectro_user_temp_transfer
-        spectro_csv_buf = io.StringIO()
-        df_spectro_out.to_csv(spectro_csv_buf, index=False)
-        s3c.put_object(Bucket=BUCKET, Key=spectro_csv_key, Body=spectro_csv_buf.getvalue())
+        _append_df_to_s3_csv(s3c, BUCKET, spectro_csv_key, spectro_user_temp_transfer)
 
     except Exception as e:
         st.error(f"Erreur lors de la sauvegarde S3 : {e}")
@@ -736,6 +740,16 @@ def _save_tagged_rows() -> None:
     st.session_state["_active_played"] = False
     st.session_state.load_locked     = False   # au moins un fichier sauvé -> [load] réactivable
     st.session_state.batch_play_audio = None
+    # purge des affichages forme d'onde / spectrogramme (batch + colonne 'ma musique', repointée par _play_active_row)
+    st.session_state.fig_batch_wave  = None
+    st.session_state.fig_batch_spect = None
+    st.session_state.fig_my_wave     = None
+    st.session_state.fig_my_spect    = None
+    st.session_state.my_show_visu    = False
+    st.session_state.my_y            = None
+    st.session_state.my_sr           = None
+    st.session_state.my_features     = None
+    st.session_state.predicted_genre = "—"
     # NB : st.session_state.user_name (clé du text_input) n'est volontairement pas touché ici,
     # afin que le nom saisi reste renseigné pour les prochains chargements de la même session.
     st.success(f"{len(names_transfer)} fichier(s) sauvegardé(s) sur S3 (utilisateur : {st.session_state.user_name}).")
@@ -958,7 +972,6 @@ _defaults = {
     "batch_features_cache": {},
     "batch_display_spectro_cache": {},
     "batch_play_audio": None,
-    "playback_volume_pct": DEFAULT_VOLUME_PCT,
     "fig_batch_wave": None,
     "fig_batch_spect": None,
     "_active_played": False,
@@ -1117,7 +1130,6 @@ def _ctrl_my():
     _render_liste_music()
 
     if st.session_state.batch_play_audio:
-        st.slider("🔊 Volume", 0, 100, key="playback_volume_pct")
         st.audio(st.session_state.batch_play_audio, format="audio/wav", autoplay=True)
 
 

@@ -133,3 +133,22 @@ ds = pd.read_csv(PATH_DS, encoding = "utf-8")
     ds["path_percu"] = [PATH_PERCU + "/" + c + "/" + f for c, f in zip(ds["label"], ds["filename"])]
     ds["path"] = [PATH_IMAGE + "/" + c + "/" + f for c, f in zip(ds["label"], ds["filename"])]
     ds["path_wav"] = [PATH_SOUND + "/" + c + "/" + f for c, f in zip(ds["label"], ds["filename_wav"])]
+
+- fichiers .FLAC
+- un seul bouton load
+- après save, rester sur la session 
+
+- introduire des tests unitaires sur le streamlit :
+  - load 4 formats de fichier 
+  - calcul des features 
+  - calcul des spectrogrammes 
+- tests d'intégration sur le streamlit 
+- tests de non régression :
+  - sur les features 
+  - sur le spectrogramme
+  - simuler une session : charge un fichier, appelle l'api, entre le genre user, sauve le fichier .csv : et le compare a un fichier de test 
+- tests système : 
+  - env de dev staging avec mock data
+  - env preprod avec petites données 
+  - env prod avec grosses données  
+   
