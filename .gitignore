@@ -1,5 +1,12 @@
+__pycache__/
+*.pyc
 .env
 .DS_Store
 ./deploiement_MVP/.secret
 ./deploiement_MVP/MLFlow/.env
+.env_copy
+
 .env
+.env.*
+**/.env
+**/.env.*

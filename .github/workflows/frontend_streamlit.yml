@@ -1,0 +1,76 @@
+name: Sync streamlit vers HF Space
+
+on:
+  push:
+    branches: [main, dev, record_music_prod ]
+    paths:
+      - 'Streamlit/**'
+      - '.github/workflows/**'
+      - 'tests/**'
+
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'streamlit/**'
+      - '.github/workflows/**'
+      - 'tests/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      STREAMLIT_APP_PATH: streamlit/streamlit_music_app4.py
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/requirements-test.txt
+          # si l'app a son propre requirements.txt (déps de prod à jour), l'installer aussi :
+          if [ -f streamlit/requirements.txt ]; then pip install -r streamlit/requirements.txt; fi
+
+      - name: Lancer les tests
+        run: pytest tests/ -v
+
+  sync:
+    needs: test
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Debug arborescence
+        run: |
+          echo "Branche/ref: ${{ github.ref }}"
+          echo "SHA: ${{ github.sha }}"
+          pwd
+          ls -la
+          git ls-tree -d --name-only HEAD
+          pwd
+          ls -la
+          find . -maxdepth 3 -type d -iname "*streamlit*"
+
+      - name: Push vers le Space HuggingFace
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{secrets.HF_USERNAME}}
+          SPACE_REPO: ${{secrets.HF_STREAMLIT_SPACE_REPO}}
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          git subtree split --prefix=Streamlit -b hf-sync-branch
+
+          git remote add hf-space "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${SPACE_REPO}"
+          git push hf-space hf-sync-branch:main --force

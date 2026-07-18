@@ -1,0 +1,43 @@
+pytest>=8.0
+pytest-timeout>=2.3
+moto[s3]>=5.0
+soundfile
+
+pandas>=2.0
+numpy>=1.26
+openpyxl
+requests>=2.31.0,<3
+image
+pybase64
+
+# --- Machine Learning & Experiment Tracking ---
+mlflow==3.5.0
+scikit-learn==1.6.1
+psycopg2-binary
+boto3
+botocore
+dotenv
+
+# --- Frontend (Streamlit) ---
+streamlit
+librosa
+plotly
+matplotlib
+seaborn
+
+# --- Backend (API FastAPI) ---
+fastapi
+uvicorn
+pydantic
+python-multipart
+
+# --- Utils ---
+jupyter
+gunicorn
+pathlib
+regex
+
+plotly
+mlflow
+python-dotenv
+pillow
