@@ -2,6 +2,11 @@
 MusicAI — Analyse & Classification de Genre Musical
 Streamlit app : sélection base GTZAN, upload audio, prédiction SVM + CNN,
 recommandations PCA et visualisations waveform / spectrogramme.
+update of 18 juillet 26 
+update des formats des spectro**.csv pour matcher avec train_CNN
+formats FLAC acceptés 
+
+en attente : un seul bouton load
 """
 # developped in streamlit==1.58.0
 # to launch the streamlit in local : 
@@ -78,6 +83,7 @@ MUSIC_USER_PREFIX      = "MUSIC_USER/"                       # préfixe S3 des m
 SPECTRO_USER_PREFIX    = MUSIC_USER_PREFIX + "spectrograms/"  # PNG harmo/percu (CNN)
 FEATURES_USER_PREFIX   = MUSIC_USER_PREFIX + "features/"      # 1 CSV features par session
 SPECTRO_CSV_PREFIX     = MUSIC_USER_PREFIX + "spectro/"       # 1 CSV catalogue spectro par session
+MUSIC_FILES_PREFIX     = MUSIC_USER_PREFIX + "music_files/"
 FEATURES_USER_MERGED_CSV = MUSIC_USER_PREFIX + "features_music_user.csv"  # fusion de tous les CSV /features
 SPECTRO_USER_MERGED_CSV  = MUSIC_USER_PREFIX + "spectro_music_user.csv"   # fusion de tous les CSV /spectro
 BATCH_MAX_WORKERS = 4   # nb de fichiers analysés en parallèle (threads I/O-bound : appels API)
@@ -483,6 +489,7 @@ def _analyze_one_file(name: str, tmp_dir: Path, out_dir: Path, status_q: "queue.
         "feats_df": feats_df,
         "genre_feat": genre_feat, "genre_cnn": genre_cnn,
         "harmo_path": str(harmo_path), "percu_path": str(percu_path),
+        "disp_path": str(disp_path),
         "disp_spect_png": disp_spect_png,
     }
 
@@ -571,7 +578,7 @@ def _process_loaded_files(files: list) -> None:
                 st.session_state.spectro_user = pd.concat([
                     st.session_state.spectro_user,
                     pd.DataFrame([{"name": r["name"], "spectro_percu": r["percu_path"],
-                                    "spectro_harmo": r["harmo_path"]}])
+                                    "spectro_harmo": r["harmo_path"], "spectro_disp": r["disp_path"]}])
                 ], ignore_index=True)
 
                 st.session_state.batch_display_spectro_cache[r["name"]] = r["disp_spect_png"]
@@ -666,6 +673,7 @@ def _save_tagged_rows() -> None:
         s3c = boto3.client('s3')
 
         # 1) upload — uniquement le segment de 30s analysé (pas le fichier complet)
+        wav_key_by_name = {}
         for name in names_transfer:
             y_seg, sr_seg = st.session_state.batch_audio_cache.get(name, (None, None))
             if y_seg is None:
@@ -673,8 +681,9 @@ def _save_tagged_rows() -> None:
                 y_seg, sr_seg = preprocess_and_extract_segment(y_raw, sr_raw)
             wav_buf = io.BytesIO()
             sf.write(wav_buf, y_seg, sr_seg, format="WAV")
-            s3_audio_key = f"{MUSIC_USER_PREFIX}{Path(name).stem}.wav"
+            s3_audio_key = f"{MUSIC_FILES_PREFIX}{Path(name).stem}.wav"
             s3c.put_object(Bucket=BUCKET, Key=s3_audio_key, Body=wav_buf.getvalue())
+            wav_key_by_name[name] = s3_audio_key
 
         # 2) features_user_temp_transfer = left-join avec df_user_music_temp_transfer (sans re-dupliquer 'filename')
         feats_transfer = feats[feats["filename"].isin(names_transfer)].copy()
@@ -687,24 +696,39 @@ def _save_tagged_rows() -> None:
         feats_csv_key = f"{FEATURES_USER_PREFIX}features_{session_id}.csv"
         _append_df_to_s3_csv(s3c, BUCKET, feats_csv_key, feats_transfer)
 
-        # 4) upload des spectrogrammes (fichiers image) correspondants
+        # 4) upload des spectrogrammes (fichiers image) correspondants : percussif, harmonique, affichage global
         spectro_transfer = spectro[spectro["name"].isin(names_transfer)].copy()
         spectro_transfer["spectro_percu_key"] = spectro_transfer["spectro_percu"].apply(
             lambda p: f"{SPECTRO_USER_PREFIX}{Path(p).name}")
         spectro_transfer["spectro_harmo_key"] = spectro_transfer["spectro_harmo"].apply(
             lambda p: f"{SPECTRO_USER_PREFIX}{Path(p).name}")
+        spectro_transfer["spectro_disp_key"] = spectro_transfer["spectro_disp"].apply(
+            lambda p: f"{SPECTRO_USER_PREFIX}{Path(p).name}")
         for _, r in spectro_transfer.iterrows():
             s3c.upload_file(r["spectro_percu"], BUCKET, r["spectro_percu_key"])
             s3c.upload_file(r["spectro_harmo"], BUCKET, r["spectro_harmo_key"])
+            s3c.upload_file(r["spectro_disp"], BUCKET, r["spectro_disp_key"])
 
-        # 5) spectro_user_temp_transfer = left-join avec df_user_music_temp_transfer (clé nom_fichier)
-        #    -> on stocke la CLÉ S3 (pas le chemin local, détruit après la session)
-        spectro_user_temp_transfer = spectro_transfer[["name", "spectro_percu_key", "spectro_harmo_key"]].rename(
-            columns={"name": "nom_fichier", "spectro_percu_key": "spectro_percu", "spectro_harmo_key": "spectro_harmo"}
-        ).merge(
+        # 5) spectro_user_temp_transfer — format aligné sur le dataset d'entraînement (ds) :
+        #    colonnes minimales ["filename", "label", "filename_wav", "path_harmo", "path_percu", "path", "path_wav"]
+        #    (label = genre_user) + 2 colonnes de métadonnées de prédiction (genre_pred_feat, genre_pred_CNN).
+        #    On stocke les CLÉS S3 (pas les chemins locaux, détruits après la session).
+        spectro_transfer["wav_key"] = spectro_transfer["name"].map(wav_key_by_name)
+        spectro_joined = spectro_transfer.rename(columns={"name": "nom_fichier"}).merge(
             df_transfer.rename(columns={"name": "nom_fichier"}),
             on="nom_fichier", how="left"
         )
+        spectro_user_temp_transfer = pd.DataFrame({
+            "filename":        spectro_joined["spectro_disp_key"].apply(lambda k: Path(k).name),
+            "label":           spectro_joined["genre_user"],
+            "filename_wav":    spectro_joined["wav_key"].apply(lambda k: Path(k).name),
+            "path_harmo":      spectro_joined["spectro_harmo_key"],
+            "path_percu":      spectro_joined["spectro_percu_key"],
+            "path":            spectro_joined["spectro_disp_key"],
+            "path_wav":        spectro_joined["wav_key"],
+            "genre_pred_feat": spectro_joined["genre_pred_feat"],
+            "genre_pred_CNN":  spectro_joined["genre_pred_CNN"],
+        })
 
         # 6) append dans le CSV spectro de LA session
         spectro_csv_key = f"{SPECTRO_CSV_PREFIX}spectro_{session_id}.csv"
@@ -1119,8 +1143,8 @@ def _ctrl_my():
     if st.session_state.show_uploader:
         k = _remaining_slots()
         files = st.file_uploader(
-            f"Sélectionnez jusqu'à {k} fichier(s) audio (.wav / .mp3 / .ogg)",
-            type=["wav", "mp3", "ogg"], accept_multiple_files=True, key="batch_uploader",
+            f"Sélectionnez jusqu'à {k} fichier(s) audio (.wav / .mp3 / .ogg / .flac)",
+            type=["wav", "mp3", "ogg", "flac"], accept_multiple_files=True, key="batch_uploader",
         )
         if files:
             _process_loaded_files(files[:k])
