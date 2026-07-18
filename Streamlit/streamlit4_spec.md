@@ -115,3 +115,21 @@ quand on save la session il n'y a pas de data ds le fichier
 si on save la meme session plusieurs fois, pb d'ecrasement du fichier 
 
 => commit "17 juillet streamlit4 mod2"
+
+## modifs a faire le 18/07: 
+sauver els fichiers csv selon les colonnes : 
+["filename", "label", "filename_wav","path_harmo","path_percu","path","path_wav" ] 
+
+ds = pd.read_csv(PATH_DS, encoding = "utf-8")
+    ds = ds[ds["filename"] != "jazz.00054.wav"]
+    ds = ds.sort_values(by = "label", ascending = True)
+    # Suppression des colonnes non-utilisées
+    c_to_drop = [c for c in ds.columns if c not in ["filename", "label"]]
+    ds = ds.drop(columns = c_to_drop)
+    # Modification/Création des colonnes utilisées, chemins des fichiers images
+    ds["filename_wav"] = ds["filename"]
+    ds["filename"] = [str.replace(c, ".wav", ".png").replace(".0", "0") for c in ds["filename"]]
+    ds["path_harmo"] = [PATH_HARMO + "/" + c + "/" + f for c, f in zip(ds["label"], ds["filename"])]
+    ds["path_percu"] = [PATH_PERCU + "/" + c + "/" + f for c, f in zip(ds["label"], ds["filename"])]
+    ds["path"] = [PATH_IMAGE + "/" + c + "/" + f for c, f in zip(ds["label"], ds["filename"])]
+    ds["path_wav"] = [PATH_SOUND + "/" + c + "/" + f for c, f in zip(ds["label"], ds["filename_wav"])]
