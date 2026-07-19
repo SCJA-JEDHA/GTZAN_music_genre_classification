@@ -24,6 +24,7 @@ import pandas as pd
 import pytest
 import soundfile as sf
 from PIL import Image
+import librosa
 
 from audio_pipeline import (
     EmptyAudioError,
@@ -63,6 +64,22 @@ def _discover_files(test_data_dir: Path, ext: str) -> list:
 
 def _b64_to_image(b64_str: str) -> Image.Image:
     return Image.open(io.BytesIO(base64.b64decode(b64_str))).convert("L")
+
+
+def _load_full_trimmed_reference_style(path: str):
+    """Reproduit EXACTEMENT le préprocessing de mel_hpss (le générateur des PNG de
+    référence dans test_data/) : librosa.load() à sa sr par défaut (22050, PAS sr=None),
+    puis un simple trim — sans extraction de segment ni padding à durée fixe.
+
+    Ne PAS remplacer par load_and_validate_audio() + preprocess_and_extract_segment() :
+    ce dernier pad à exactement 30s (nécessaire en production pour donner une entrée de
+    durée fixe au CNN), ce que mel_hpss ne fait jamais. Ce padding décale la normalisation
+    globale du spectrogramme (min/max sur toute l'image) et rend toute comparaison
+    pixel-à-pixel avec les PNG de référence invalide.
+    """
+    y, sr = librosa.load(path)       # sr=22050 par défaut, comme mel_hpss
+    y, _ = librosa.effects.trim(y)   # trim SANS resample préalable, comme mel_hpss
+    return y, sr
 
 
 def _assert_features_close(computed: pd.Series, reference: pd.Series,
@@ -191,14 +208,20 @@ def test_compute_features_matches_reference(test_data_dir: Path, features_refere
                         f"(vérifie la colonne 'filename')")
         reference = ref_rows.iloc[0]
 
-        y_raw, sr_raw = load_and_validate_audio(str(f))
-        y_seg, sr_seg = preprocess_and_extract_segment(y_raw, sr_raw)
+        # Préprocessing fidèle à la génération de référence (trim, sans extraction de
+        # segment ni padding à durée fixe) — voir _load_full_trimmed_reference_style.
+        # Le pipeline de production (preprocess_and_extract_segment) pad à 30s fixes,
+        # ce qui décale plusieurs features (rms, longueur, etc.) par rapport à la référence.
+        y_seg, sr_seg = _load_full_trimmed_reference_style(str(f))
         computed = compute_features(y_seg, sr_seg, filename=f.name).iloc[0]
 
-        # 'length' doit être strictement identique (segment de durée fixe, indépendant du format)
-        assert int(computed["length"]) == int(reference["length"]), (
+        # 'length' : tolérance de quelques échantillons pour mp3/ogg (le décodage lossy peut
+        # légèrement changer le nombre d'échantillons décodés selon l'alignement des frames) ;
+        # exact pour wav/flac.
+        length_tol = 0 if ext in ("wav", "flac") else 2205  # ~0.1s à 22050 Hz
+        assert abs(int(computed["length"]) - int(reference["length"])) <= length_tol, (
             f"{f.name} : longueur de segment différente "
-            f"(calculé={computed['length']}, référence={reference['length']})"
+            f"(calculé={computed['length']}, référence={reference['length']}, tolérance={length_tol})"
         )
 
         _assert_features_close(computed, reference, feature_cols, ext, f.name)
@@ -219,8 +242,11 @@ def test_compute_spectrograms_match_reference(test_data_dir: Path, ext: str):
             pytest.skip(f"Spectrogrammes de référence introuvables pour '{f.name}' "
                         f"(attendus : {harmo_ref_path.name}, {percu_ref_path.name})")
 
-        y_raw, sr_raw = load_and_validate_audio(str(f))
-        y_seg, sr_seg = preprocess_and_extract_segment(y_raw, sr_raw)
+        # Préprocessing fidèle à mel_hpss (générateur des PNG de référence) — PAS le
+        # pipeline de production (load_and_validate_audio + preprocess_and_extract_segment),
+        # qui pad à 30s fixes et fausserait la comparaison pixel-à-pixel. Voir le
+        # docstring de _load_full_trimmed_reference_style pour le détail.
+        y_seg, sr_seg = _load_full_trimmed_reference_style(str(f))
         payload_spectro, _ = calcul_image_pour_CNN(y_seg, sr_seg)
 
         img_harmo_computed = _b64_to_image(payload_spectro["harmo_file"])
@@ -230,3 +256,31 @@ def test_compute_spectrograms_match_reference(test_data_dir: Path, ext: str):
 
         _assert_images_similar(img_harmo_computed, img_harmo_ref, ext, f"{f.name} (harmo)")
         _assert_images_similar(img_percu_computed, img_percu_ref, ext, f"{f.name} (percu)")
+
+
+@pytest.mark.parametrize("ext", AUDIO_EXTENSIONS)
+def test_production_pipeline_contract(test_data_dir: Path, ext: str):
+    """Contrôle le pipeline RÉEL de production (celui utilisé par _analyze_one_file dans
+    l'app : load_and_validate_audio + preprocess_and_extract_segment, AVEC padding à durée
+    fixe) — sans comparaison pixel-à-pixel avec les références GTZAN (non pertinente ici,
+    cf. test_compute_spectrograms_match_reference). On vérifie juste que le contrat de
+    sortie (durée fixe, image exploitable) est respecté quel que soit le format d'entrée."""
+    files = _discover_files(test_data_dir, ext)
+    if not files:
+        pytest.skip(f"Aucun fichier .{ext} trouvé dans {test_data_dir}")
+
+    for f in files:
+        y_raw, sr_raw = load_and_validate_audio(str(f))
+        y_seg, sr_seg = preprocess_and_extract_segment(y_raw, sr_raw)
+
+        expected_len = int(30 * sr_seg)  # TIME_SEGMENT * TARGET_SR
+        assert len(y_seg) == expected_len, (
+            f"{f.name} : le pipeline de production doit toujours produire un segment de "
+            f"durée fixe ({expected_len} échantillons), obtenu {len(y_seg)}"
+        )
+
+        payload_spectro, _ = calcul_image_pour_CNN(y_seg, sr_seg)
+        img_h = _b64_to_image(payload_spectro["harmo_file"])
+        img_p = _b64_to_image(payload_spectro["percu_file"])
+        assert img_h.size == (256, 128), f"{f.name} : taille harmo inattendue {img_h.size}"
+        assert img_p.size == (256, 128), f"{f.name} : taille percu inattendue {img_p.size}"
