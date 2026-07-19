@@ -38,7 +38,7 @@ jobs:
           if [ -f streamlit/requirements.txt ]; then pip install -r streamlit/requirements.txt; fi
 
       - name: Lancer les tests
-        run: pytest tests/ -v
+        run: pytest tests/ -v --rootdir=.
 
   sync:
     needs: test
