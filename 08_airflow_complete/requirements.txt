@@ -12,4 +12,4 @@ psycopg2-binary
 mlflow==3.5.0
 scikit-learn==1.6.1
 boto3
-psycopg2-binary
+evidently==0.7.21

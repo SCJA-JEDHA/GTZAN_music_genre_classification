@@ -12,7 +12,7 @@ INPUT_PREFIX_SPECTRO = "MUSIC_USER/spectro_test"
 OUTPUT_KEY = "etl/output/concatenated.csv"
 
 @dag(
-    dag_id="etl_concat_csv",
+    dag_id="etl_concat1_csv",
     schedule="@daily",
     catchup=False,
     start_date=datetime(2026, 1, 1),

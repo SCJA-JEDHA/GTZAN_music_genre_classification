@@ -75,6 +75,22 @@ docker compose up
 
 (ajoutez `-d` pour lancer en arrière-plan)
 
+### notes : s'il faut rebuild le docker-compose, 
+#### 1. Arrêter la stack actuelle
+docker compose down -v
+⚠️ -v supprime le volume Postgres (postgres-db-volume) — à utiliser seulement si tu veux repartir sur une base Airflow vierge, pas juste appliquer un changement de dépendances.
+
+#### 2. Reconstruire l'image avec le Dockerfile modifié (sans cache pour être sûr)
+docker compose build --no-cache
+
+#### 3. Réinitialiser/mettre à jour la base de métadonnées Airflow
+#    (nécessaire si de nouveaux providers ont été ajoutés au requirements.txt)
+docker compose up airflow-init
+
+#### 4. Relancer toute la stack
+docker compose up -d
+
+
 ### 4. Accéder à l'interface
 
 - Ouvrez [http://localhost:8080](http://localhost:8080)

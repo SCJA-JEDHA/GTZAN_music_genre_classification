@@ -1,16 +1,22 @@
 # dags/monitoring_drift_musicai.py
 from airflow.sdk import dag, task
+from airflow import DAG
 from datetime import datetime
 import pandas as pd
 import boto3
 import io
+import os
+import evidently
+from evidently.test_suite import TestSuite
+from evidently.tests import TestShareOfDriftedColumns
 
-S3_BUCKET = "ton-bucket"
+
+S3_BUCKET = os.getenv("AWS_BUCKET")
 FEATURE_COLUMNS = [...]  # tes 57 colonnes numériques GTZAN
 
 @dag(
-    dag_id="monitoring_drift_musicai",
-    schedule="@daily",
+    dag_id="monitoring_drift_musicai cyril",
+    schedule="*/5 * * * *",   # toutes les 5 minutes, cron classique
     catchup=False,
     start_date=datetime(2026, 1, 1),
 )
@@ -36,9 +42,7 @@ def monitoring_drift_musicai_dag():
 
     @task
     def run_drift_check(reference: dict, current: dict) -> dict:
-        from evidently.test_suite import TestSuite
-        from evidently.tests import TestShareOfDriftedColumns
-
+        
         reference_df = pd.DataFrame(reference)[FEATURE_COLUMNS]
         current_df = pd.DataFrame(current)[FEATURE_COLUMNS]
 
