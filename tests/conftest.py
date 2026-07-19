@@ -1,11 +1,28 @@
 """
+conftest.py
+-----------
 Fixtures partagées pour les tests de l'app Streamlit MusicAI.
 
 Le script app n'est pas structuré en package (code d'exécution au niveau module,
 comme la plupart des apps Streamlit) : l'importer exécute donc tout le rendu de
 la page. On mocke S3 (via moto) et les variables d'environnement AVANT chaque
 import pour que ça ne casse jamais en CI (pas de vrai AWS/API nécessaire).
+
+
+2eme partie : 
+
+- Localise la racine du repo (via .git) pour que les tests fonctionnent quel que soit
+  le répertoire depuis lequel pytest est lancé (local, CI, etc.).
+- Ajoute streamlit/ au sys.path pour pouvoir `import audio_pipeline` sans dépendre
+  du reste de l'app (pas de Streamlit/S3 chargés).
+- Expose TEST_DATA_DIR (racine_repo/test_data), ajustable via la variable
+  d'environnement TEST_DATA_DIR si besoin.
 """
+import os
+import sys
+from pathlib import Path
+
+import pytest
 import importlib.util
 import io
 import os
@@ -131,3 +148,30 @@ def batch_session(app, tmp_path):
     st.session_state.predicted_genre = "rock"
 
     return {"name": name, "y": y, "sr": sr}
+
+
+
+
+
+def _find_repo_root(start: Path) -> Path:
+    for parent in [start.resolve()] + list(start.resolve().parents):
+        if (parent / ".git").exists():
+            return parent
+    raise RuntimeError(f"Racine du repo introuvable depuis {start}")
+
+
+REPO_ROOT = _find_repo_root(Path(__file__))
+STREAMLIT_DIR = REPO_ROOT / "streamlit"
+
+if str(STREAMLIT_DIR) not in sys.path:
+    sys.path.insert(0, str(STREAMLIT_DIR))
+
+TEST_DATA_DIR = Path(os.environ.get("TEST_DATA_DIR", REPO_ROOT / "test_data"))
+
+
+@pytest.fixture(scope="session")
+def test_data_dir() -> Path:
+    if not TEST_DATA_DIR.is_dir():
+        pytest.skip(f"Répertoire test_data introuvable : {TEST_DATA_DIR} "
+                    f"(ajuste via la variable d'environnement TEST_DATA_DIR)")
+    return TEST_DATA_DIR
