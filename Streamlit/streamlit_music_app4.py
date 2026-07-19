@@ -6,6 +6,7 @@ recommandations PCA et visualisations waveform / spectrogramme.
 # developped in streamlit==1.58.0
 # to launch the streamlit in local : 
 # streamlit run .\streamlit_music_app3.py --server.runOnSave true --logger.level=debug
+#
 
 import io
 import requests
