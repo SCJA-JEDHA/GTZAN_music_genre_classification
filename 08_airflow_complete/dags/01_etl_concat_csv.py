@@ -6,7 +6,10 @@ from datetime import datetime, timezone
 
 import boto3
 import pandas as pd
-from airflow.decorators import dag, task   # API TaskFlow Airflow 2.x — pas airflow.sdk (Airflow 3 uniquement)
+#from airflow.decorators import dag, task   # API TaskFlow Airflow 2.x — pas airflow.sdk (Airflow 3 uniquement)
+from airflow import DAG
+from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
 
 S3_BUCKET = os.getenv("AWS_BUCKET")
 INPUT_PREFIX_FEATURES = "MUSIC_USER/features_test"
@@ -66,47 +69,61 @@ def _concat_with_dedup(s3, files: list, dedup_key: str):
         .reset_index(drop=True)
     )
 
-
-@dag(
-    dag_id="etl_concat2_csv",
-    schedule="*/5 * * * *",   # toutes les 5 minutes — cron classique, natif Airflow 2.x
-    catchup=False,
-    start_date=datetime(2026, 1, 1),
-)
-# Note : le déclenchement événementiel "à chaque nouveau fichier" (Asset + AssetWatcher +
-# MessageQueueTrigger/SQS) est réservé à Airflow 3.0+ — inutilisable en 2.10.4. Le cron 5 min
-# ci-dessus est le seul mécanisme disponible sur cette version. À réévaluer si vous migrez
-# vers Airflow 3 un jour.
-def etl_concat_csv_dag():
-
-    @task
-    def concat_features():
-        s3 = boto3.client("s3")
-        files = _list_matching_files(s3, INPUT_PREFIX_FEATURES, FEATURES_FILENAME_RE)
-        result = _concat_with_dedup(s3, files, dedup_key="filename")
-        if result is None:
-            print("Aucun fichier features_*.csv trouvé depuis le 19/07 — rien à faire")
-            return
-        buffer = io.StringIO()
-        result.to_csv(buffer, index=False)
-        s3.put_object(Bucket=S3_BUCKET, Key=OUTPUT_KEY_FEATURES, Body=buffer.getvalue())
-        print(f"{len(files)} fichiers → {result.shape[0]} lignes (après dédup) → s3://{S3_BUCKET}/{OUTPUT_KEY_FEATURES}")
-
-    @task
-    def concat_spectro():
-        s3 = boto3.client("s3")
-        files = _list_matching_files(s3, INPUT_PREFIX_SPECTRO, SPECTRO_FILENAME_RE)
-        result = _concat_with_dedup(s3, files, dedup_key="filename_wav")
-        if result is None:
-            print("Aucun fichier spectro_*.csv trouvé depuis le 19/07 — rien à faire")
-            return
-        buffer = io.StringIO()
-        result.to_csv(buffer, index=False)
-        s3.put_object(Bucket=S3_BUCKET, Key=OUTPUT_KEY_SPECTRO, Body=buffer.getvalue())
-        print(f"{len(files)} fichiers → {result.shape[0]} lignes (après dédup) → s3://{S3_BUCKET}/{OUTPUT_KEY_SPECTRO}")
-
-    concat_features()
-    concat_spectro()
+def _concat_features():
+    s3 = boto3.client("s3")
+    files = _list_matching_files(s3, INPUT_PREFIX_FEATURES, FEATURES_FILENAME_RE)
+    result = _concat_with_dedup(s3, files, dedup_key="filename")
+    if result is None:
+        print("Aucun fichier features_*.csv trouvé depuis le 19/07 — rien à faire")
+        return
+    buffer = io.StringIO()
+    result.to_csv(buffer, index=False)
+    s3.put_object(Bucket=S3_BUCKET, Key=OUTPUT_KEY_FEATURES, Body=buffer.getvalue())
+    print(f"{len(files)} fichiers → {result.shape[0]} lignes (après dédup) → s3://{S3_BUCKET}/{OUTPUT_KEY_FEATURES}")
 
 
-etl_concat_csv_dag()
+def _concat_spectro():
+    s3 = boto3.client("s3")
+    files = _list_matching_files(s3, INPUT_PREFIX_SPECTRO, SPECTRO_FILENAME_RE)
+    result = _concat_with_dedup(s3, files, dedup_key="filename_wav")
+    if result is None:
+        print("Aucun fichier spectro_*.csv trouvé depuis le 19/07 — rien à faire")
+        return
+    buffer = io.StringIO()
+    result.to_csv(buffer, index=False)
+    s3.put_object(Bucket=S3_BUCKET, Key=OUTPUT_KEY_SPECTRO, Body=buffer.getvalue())
+    print(f"{len(files)} fichiers → {result.shape[0]} lignes (après dédup) → s3://{S3_BUCKET}/{OUTPUT_KEY_SPECTRO}")
+
+
+
+default_args = {
+    "owner": "airflow",
+    "schedule": "*/5 * * * *",   # toutes les 5 minutes — cron classique, natif Airflow 2.x
+    "start_date": datetime(2026, 1, 1),
+}
+
+with DAG(
+    dag_id="01_etl_csv_musicAI",
+    default_args=default_args,
+    schedule="*/5 * * * *",
+    start_date=datetime(2026, 7, 19),
+    catchup=False,  # si dag en pause, et restart, true refait toutes les instances manquees
+    description="ETL MusicAI concat csv tables",
+    tags=["MusicAI", "etl"],    
+) as dag:
+    
+    start = EmptyOperator(task_id="start")
+    
+    concat_features = PythonOperator(task_id="concat_features", 
+                                         python_callable=_concat_features
+                                         )
+        
+    concat_spectro = PythonOperator(task_id="concat_spectro", 
+                                         python_callable=_concat_spectro
+                                         )
+
+    end = EmptyOperator(task_id="end")
+
+    start >> [concat_features, concat_spectro] >> end
+
+   

@@ -62,7 +62,7 @@ New-Item -ItemType Directory -Path .dags,.logs,.plugin,.data
 
 ```bash
 docker compose up airflow-init
-```
+``` 
 
 Attendez le message `airflow-init exited with code 0`.
 
@@ -276,3 +276,18 @@ docker compose exec airflow-scheduler airflow dags list-import-errors
 - [Créer un opérateur custom](https://airflow.apache.org/docs/apache-airflow/stable/howto/custom-operator.html)
 - [Liste des opérateurs et providers](https://airflow.apache.org/docs/apache-airflow-providers/operators-and-hooks-ref/index.html)
 - [Bonnes pratiques d'écriture de DAGs](https://airflow.apache.org/docs/apache-airflow/stable/best-practices.html)
+
+
+## fernet key :
+!! il faut ajouter le airflow.cfg dans .gitignore !! 
+
+la fernet key a ete exposée 
+
+Generating Fernet key
+
+If you need to generate a new fernet key you can use the following code snippet.
+
+    from cryptography.fernet import Fernet
+
+    fernet_key = Fernet.generate_key()
+    print(fernet_key.decode())  # your fernet_key, keep it in secured place!

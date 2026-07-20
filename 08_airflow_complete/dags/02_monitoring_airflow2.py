@@ -1,5 +1,4 @@
 # dags/monitoring_drift_musicai.py
-from airflow.decorators import dag, task
 from datetime import datetime
 import pandas as pd
 import boto3
@@ -7,6 +6,10 @@ import io
 import os
 from evidently.test_suite import TestSuite
 from evidently.tests import TestShareOfDriftedColumns
+from airflow import DAG
+from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
+
 
 
 S3_BUCKET = os.getenv("AWS_BUCKET")
