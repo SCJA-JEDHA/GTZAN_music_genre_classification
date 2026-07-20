@@ -2,11 +2,15 @@
 MusicAI — Analyse & Classification de Genre Musical
 Streamlit app : sélection base GTZAN, upload audio, prédiction SVM + CNN,
 recommandations PCA et visualisations waveform / spectrogramme.
+update of 18 juillet 26 
+update des formats des spectro**.csv pour matcher avec train_CNN
+formats FLAC acceptés 
+
+en attente : un seul bouton load
 """
 # developped in streamlit==1.58.0
 # to launch the streamlit in local : 
 # streamlit run .\streamlit_music_app3.py --server.runOnSave true --logger.level=debug
-##
 
 import io
 import requests
@@ -40,15 +44,6 @@ import soundfile as sf
 from dotenv import load_dotenv
 from typing import Tuple, Any
 
-from audio_pipeline import (
-    TARGET_SR, CLIP_DURATION, N_FFT, HOP, IMAGE_NX, IMAGE_NY,
-    TIME_THRESHOLD, TIME_SEGMENT, MIN_AUDIO_DURATION_S,
-    AudioValidationError, EmptyAudioError, AudioTooShortError,
-    validate_audio_duration, load_and_validate_audio,
-    preprocess_signal, extract_segment, preprocess_and_extract_segment,
-    compute_features, compute_melspectrogram, image_to_base64, calcul_image_pour_CNN,
-)
-
 load_dotenv()
 
 
@@ -67,6 +62,13 @@ PCA_PREFIX           = MUSIC_DATABASE_PREFIX + "PCA/"
 PCA_PIPELINE         = "pca_pipeline.pkl"
 PCA_X_PCA            = "X_pca.csv"
 
+TARGET_SR      = 22050
+CLIP_DURATION  = 30
+N_FFT          = 2048
+HOP            = 512
+IMAGE_NX       = 432
+IMAGE_NY       = 288
+
 LIST_GENRES = [
     'blues','classical','country','disco','hiphop',
     'jazz','metal','pop','reggae','rock'
@@ -75,11 +77,13 @@ LIST_GENRES = [
 # CONFIG — MODE BATCH (colonne 2)
 N_MUSIC_FILES   = 20                          # nb max de fichiers en file d'attente
 M_DISPLAY_ROWS  = 12                          # nb de lignes affichées dans liste_music
+TIME_THRESHOLD  = 15                          # début du segment analysé (s)
+TIME_SEGMENT    = 30                          # durée du segment analysé (s)
 MUSIC_USER_PREFIX      = "MUSIC_USER/"                       # préfixe S3 des musiques taguées (dans le bucket existant)
-MUSIC_FILES_PREFIX     = MUSIC_USER_PREFIX + "music_files/"
 SPECTRO_USER_PREFIX    = MUSIC_USER_PREFIX + "spectrograms/"  # PNG harmo/percu (CNN)
 FEATURES_USER_PREFIX   = MUSIC_USER_PREFIX + "features/"      # 1 CSV features par session
 SPECTRO_CSV_PREFIX     = MUSIC_USER_PREFIX + "spectro/"       # 1 CSV catalogue spectro par session
+MUSIC_FILES_PREFIX     = MUSIC_USER_PREFIX + "music_files/"
 FEATURES_USER_MERGED_CSV = MUSIC_USER_PREFIX + "features_music_user.csv"  # fusion de tous les CSV /features
 SPECTRO_USER_MERGED_CSV  = MUSIC_USER_PREFIX + "spectro_music_user.csv"   # fusion de tous les CSV /spectro
 BATCH_MAX_WORKERS = 4   # nb de fichiers analysés en parallèle (threads I/O-bound : appels API)
@@ -148,10 +152,70 @@ def trim_audio(y, sr) -> np.ndarray:
     audio_trimmed, _ = librosa.effects.trim(y)
     return audio_trimmed
 
+def preprocess_signal(y, sr) -> tuple:
+    y_trimmed, _ = librosa.effects.trim(y)
+    n_samples = int(CLIP_DURATION * TARGET_SR)
+    y_resampled = librosa.resample(y_trimmed, orig_sr=sr, target_sr=TARGET_SR)
+    y_clip = y_resampled[:n_samples] if len(y_resampled) >= n_samples else np.pad(
+        y_resampled, (0, n_samples - len(y_resampled))
+    )
+    return y_clip, TARGET_SR
+
+def compute_features(y, sr, filename: str = 'user.file') -> pd.DataFrame:
+    features, column_names = [], []
+    features.append(filename); column_names.append('filename')
+    features.append(len(y));      column_names.append('length')
+
+    chroma             = librosa.feature.chroma_stft(y=y, sr=sr)
+    rms                = librosa.feature.rms(y=y)
+    spectral_centroid  = librosa.feature.spectral_centroid(y=y, sr=sr)
+    spectral_bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr)
+    rolloff            = librosa.feature.spectral_rolloff(y=y, sr=sr)[0]
+    zero_crossing_rate = librosa.feature.zero_crossing_rate(y)
+    harmony, perceptr  = librosa.effects.hpss(y)
+    tempo, _           = librosa.beat.beat_track(y=y, sr=sr)
+    mfccs              = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
+
+    feature_dict = {
+        'chroma_stft': chroma, 'rms': rms,
+        'spectral_centroid': spectral_centroid,
+        'spectral_bandwidth': spectral_bandwidth,
+        'rolloff': rolloff, 'zero_crossing_rate': zero_crossing_rate,
+        'harmony': harmony, 'perceptr': perceptr,
+    }
+    for name, data in feature_dict.items():
+        features.extend([data.mean(), data.var()])
+        column_names.extend([f'{name}_mean', f'{name}_var'])
+
+    features.append(float(tempo) if np.isscalar(tempo) else tempo.mean())
+    column_names.append('tempo')
+
+    for idx, x in enumerate(mfccs):
+        features.extend([np.mean(x), np.var(x)])
+        column_names.extend([f"mfcc{idx+1}_mean", f"mfcc{idx+1}_var"])
+
+    features.append('user'); column_names.append('label')
+
+    df_features = pd.DataFrame(columns=column_names)
+    df_features.loc[0] = features
+    return df_features
+
+def compute_melspectrogram(y, sr) -> np.ndarray:
+    spect = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=N_FFT, hop_length=HOP)
+    spect = librosa.power_to_db(spect, ref=np.max)
+    spect.resize(IMAGE_NY, IMAGE_NX, refcheck=False)
+    return spect
+
 def audio_bytes_s3(s3_key: str) -> bytes:
     s3c = boto3.client('s3')
     obj = s3c.get_object(Bucket=BUCKET, Key=s3_key)
     return obj['Body'].read()
+
+def image_to_base64(img):
+    i_bytes = io.BytesIO()
+    img.save(i_bytes, format="PNG")
+    i_bytes.seek(0)
+    return base64.b64encode(i_bytes.getvalue()).decode("utf-8")
 
 
 # HELPERS — VISUALISATION
@@ -299,6 +363,29 @@ def project_new_point(pca_pipeline, features):
 
 
 # HELPERS — API PRÉDICTION
+def calcul_image_pour_CNN(y, sr):
+    n_fft, hop_length, n_mels = N_FFT, HOP, 128
+    y_harmonic, y_percussive = librosa.effects.hpss(y)
+
+    def _make_img(signal):
+        S = librosa.feature.melspectrogram(y=signal, sr=sr, n_fft=n_fft,
+                                           hop_length=hop_length, n_mels=n_mels)
+        S_db = librosa.power_to_db(S, ref=np.max)
+        S_db = np.flipud(S_db)
+        norm = (S_db - S_db.min()) / (S_db.max() - S_db.min() + 1e-8)
+        return Image.fromarray((norm * 255).astype(np.uint8), mode="L").resize(
+            (256, 128), Image.Resampling.LANCZOS
+        )
+
+    img_h = _make_img(y_harmonic)
+    img_p = _make_img(y_percussive)
+
+    S_base = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels)
+    S_DB   = np.flipud(librosa.power_to_db(S_base, ref=np.max))
+
+    payload_spectro = {"harmo_file": image_to_base64(img_h), "percu_file": image_to_base64(img_p)}
+    return payload_spectro, S_DB
+
 def call_predict_api_CNN(payload_img: dict) -> int:
     try:
         resp = requests.post(API_MODEL_CNN_URL + 'predict-cnn', json=payload_img)
@@ -320,6 +407,29 @@ def call_predict_api(list_features_obj: list) -> str:
 
 
 # HELPERS — MODE BATCH (colonne 2)
+def extract_segment(y: np.ndarray, sr: int,
+                     t_start: float = TIME_THRESHOLD,
+                     t_dur: float = TIME_SEGMENT) -> np.ndarray:
+    """Extrait un segment de t_dur secondes à partir de t_start (pad si trop court)."""
+    i0 = int(t_start * sr)
+    i1 = i0 + int(t_dur * sr)
+    if i0 >= len(y):
+        i0, i1 = 0, min(len(y), int(t_dur * sr))
+    seg = y[i0:i1]
+    n_target = int(t_dur * sr)
+    if len(seg) < n_target:
+        seg = np.pad(seg, (0, n_target - len(seg)))
+    return seg.astype(np.float32)
+
+def preprocess_and_extract_segment(y: np.ndarray, sr: int,
+                                    t_start: float = TIME_THRESHOLD,
+                                    t_dur: float = TIME_SEGMENT) -> tuple:
+    """Trim + resample à TARGET_SR (preprocess_signal), puis extrait le segment [t_start, t_start+t_dur]."""
+    y_trimmed, _ = librosa.effects.trim(y)
+    y_resampled  = librosa.resample(y_trimmed, orig_sr=sr, target_sr=TARGET_SR)
+    seg = extract_segment(y_resampled, TARGET_SR, t_start, t_dur)
+    return seg, TARGET_SR
+
 def _save_b64_png(b64_str: str, path: Path) -> None:
     with open(path, "wb") as f:
         f.write(base64.b64decode(b64_str))
@@ -346,7 +456,6 @@ def _analyze_one_file(name: str, tmp_dir: Path, out_dir: Path, status_q: "queue.
     """
     status_q.put(f"{name} : chargement audio…")
     y_raw, sr_raw = librosa.load(str(tmp_dir / name), sr=None)
-    validate_audio_duration(y_raw, sr_raw)  # lève EmptyAudioError / AudioTooShortError si invalide
     y_seg, sr_seg = preprocess_and_extract_segment(y_raw, sr_raw)
 
     status_q.put(f"{name} : calcul des features + spectrogrammes…")
@@ -446,11 +555,6 @@ def _process_loaded_files(files: list) -> None:
                 name = futures[future]
                 try:
                     r = future.result()
-                except AudioValidationError as e:
-                    st.error(f"{name} : {e}")
-                    done += 1
-                    progress.progress(done / n_files, text=f"{done}/{n_files} — échec sur {name}")
-                    continue
                 except Exception as e:
                     st.error(f"Erreur lors de l'analyse de {name} : {e}")
                     done += 1
@@ -838,9 +942,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# SESSION STATE — DOIT s'exécuter avant tout code qui lit st.session_state (ex. l'en-tête
-# juste en dessous, qui teste session_id) : toute lecture directe (.attribut ou ['clé']) d'une
-# clé non initialisée lève une AttributeError/KeyError en Streamlit.
+# EN-TÊTE
+head_col1, head_col2 = st.columns([3, 1])
+with head_col1:
+    st.markdown("# 🎵 MusicAI — Analyse & Classification de Genre Musical")
+    st.markdown("🎧 Déposez un son. Découvrez son genre. Explorez ce qui lui ressemble.")
+with head_col2:
+    st.text_input(
+        "Utilisateur",
+        key="user_name",
+        placeholder="please write your user name",
+        help="please write your user name",
+    )
+st.divider()
+_render_admin_sidebar()
+
+
+
+# SESSION STATE
 _defaults = {
     "db_audio_bytes": None, "my_audio_bytes": None, "rec_audio_bytes": None,
     "my_payload_spectro": None,
@@ -871,6 +990,7 @@ _defaults = {
     "spectro_user": pd.DataFrame(columns=["name", "spectro_percu", "spectro_harmo"]),
     "batch_temp_dir": None,
     "load_locked": False,
+    "show_uploader": False,
     "active_row_idx": 0,
     "batch_audio_cache": {},
     "batch_features_cache": {},
@@ -883,27 +1003,6 @@ _defaults = {
 for k, v in _defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
-
-
-# EN-TÊTE
-head_col1, head_col2 = st.columns([3, 1])
-with head_col1:
-    st.markdown("# 🎵 MusicAI — Analyse & Classification de Genre Musical")
-    st.markdown("🎧 Déposez un son. Découvrez son genre. Explorez ce qui lui ressemble.")
-with head_col2:
-    st.text_input(
-        "Utilisateur",
-        key="user_name",
-        placeholder="please write your user name",
-        help="please write your user name",
-        disabled=st.session_state.session_id is not None,
-    )
-    if st.session_state.session_id is not None:
-        st.caption("Session en cours — nom verrouillé jusqu'à rechargement de la page.")
-st.divider()
-_render_admin_sidebar()
-
-
 
 
 # SIDEBAR
@@ -950,7 +1049,7 @@ def _ctrl_db():
             st.error(f"Fichier introuvable : {s3_key}")
 
     if st.session_state.db_audio_bytes:
-        st.audio(st.session_state.db_audio_bytes, format="audio/wav", autoplay=True)
+        st.audio(st.session_state.db_audio_bytes, format="audio/wav")
 
 
 # RANGÉE HAUTE COL 2 — Batch load / up / down / play / save + liste_music
@@ -1023,36 +1122,9 @@ def _ctrl_my():
 
     b_load, b_up, b_down, b_play, b_save = st.columns(5)
     with b_load:
-        st.markdown(f"""
-            <label class="musicai-load-btn{' disabled' if load_disabled else ''}" title="Load">📥</label>
-            <style>
-            .musicai-load-btn {{
-                display:flex; align-items:center; justify-content:center;
-                width:100%; height:2.5rem; border-radius:0.5rem;
-                border:1px solid rgba(49,51,63,0.2); cursor:pointer;
-                font-size:1.1rem; background:#fff; margin-top:2px;
-            }}
-            .musicai-load-btn.disabled {{ opacity:0.4; cursor:not-allowed; pointer-events:none; }}
-            .musicai-load-btn:hover {{ border-color:#ff4b4b; }}
-            /* uploader natif masqué visuellement mais toujours monté dans le DOM
-               (nécessaire pour que le clic JS puisse ouvrir le sélecteur de fichiers OS) */
-            .st-key-batch_uploader_zone [data-testid="stFileUploaderDropzoneInstructions"],
-            .st-key-batch_uploader_zone small {{ display:none !important; }}
-            .st-key-batch_uploader_zone [data-testid="stFileUploaderDropzone"] {{
-                border:none !important; padding:0 !important; background:transparent !important;
-                min-height:0 !important; height:0 !important; overflow:hidden !important;
-            }}
-            </style>
-            <script>
-            (function() {{
-                const btn = document.currentScript.previousElementSibling.previousElementSibling;
-                btn.addEventListener('click', function() {{
-                    const zone = document.querySelector('.st-key-batch_uploader_zone [data-testid="stFileUploaderDropzone"] button');
-                    if (zone) zone.click();
-                }});
-            }})();
-            </script>
-        """, unsafe_allow_html=True)
+        if st.button("📥", key="btn_load", disabled=load_disabled, width='stretch',
+                      help="Load"):
+            st.session_state.show_uploader = True
     with b_up:
         if st.button("⬆", key="btn_up", disabled=not can_up, width='stretch', help="Up"):
             st.session_state.active_row_idx -= 1
@@ -1068,18 +1140,16 @@ def _ctrl_my():
         if st.button("💾", key="btn_save", disabled=not can_save, width='stretch', help="Save"):
             _save_tagged_rows()
 
-    # L'uploader reste TOUJOURS monté (masqué en CSS ci-dessus) : c'est ce qui permet
-    # au clic sur 📥 d'ouvrir directement le sélecteur de fichiers OS, sans rerun intermédiaire.
-    uploader_zone = st.container(key="batch_uploader_zone")
-    with uploader_zone:
+    if st.session_state.show_uploader:
         k = _remaining_slots()
         files = st.file_uploader(
             f"Sélectionnez jusqu'à {k} fichier(s) audio (.wav / .mp3 / .ogg / .flac)",
             type=["wav", "mp3", "ogg", "flac"], accept_multiple_files=True, key="batch_uploader",
         )
-    if files:
-        _process_loaded_files(files[:k])
-        st.rerun()
+        if files:
+            _process_loaded_files(files[:k])
+            st.session_state.show_uploader = False
+            st.rerun()
 
     _render_liste_music()
 
@@ -1170,7 +1240,7 @@ def _ctrl_rec():
 
     _cur_ab = st.session_state.db_rec_audio_bytes if source_choice == "database choice" else st.session_state.my_rec_audio_bytes
     if _cur_ab:
-        st.audio(_cur_ab, format="audio/wav", autoplay=True)
+        st.audio(_cur_ab, format="audio/wav")
 
 
 # Appels rangée haute
