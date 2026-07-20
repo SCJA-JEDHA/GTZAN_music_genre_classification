@@ -13,6 +13,8 @@ en attente : un seul bouton load
 # streamlit run .\streamlit_music_app3.py --server.runOnSave true --logger.level=debug
 
 import io
+import re
+import unicodedata
 import requests
 import concurrent.futures as cf
 import queue
@@ -446,6 +448,21 @@ def _effective_genre(row: pd.Series) -> str:
             return val
     return "—"
 
+def _sanitize_filename(filename: str) -> str:
+    """Nettoie un nom de fichier uploadé pour un usage sûr comme clé S3 et comme valeur
+    dans les colonnes filename/filename_wav des CSV : supprime les accents/diacritiques,
+    remplace espaces et caractères spéciaux par des underscores. Conserve l'extension
+    d'origine (en minuscules). Ex: "Mon Morceau (été) 2.wav" -> "Mon_Morceau_ete_2.wav"
+    """
+    stem, ext = Path(filename).stem, Path(filename).suffix.lower()
+    # Décompose les caractères accentués puis retire les diacritiques (é -> e, à -> a…)
+    stem = unicodedata.normalize("NFKD", stem).encode("ascii", "ignore").decode("ascii")
+    # Remplace tout ce qui n'est pas alphanumérique/tiret/underscore par un underscore
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_")
+    if not stem:
+        stem = "fichier"
+    return f"{stem}{ext}"
+
 def _analyze_one_file(name: str, tmp_dir: Path, out_dir: Path, status_q: "queue.Queue") -> dict:
     """
     Traitement complet d'UN fichier, conçu pour tourner dans un thread :
@@ -507,8 +524,9 @@ def _process_loaded_files(files: list) -> None:
     new_names = []
     for f in files:
         raw = f.read()
-        (tmp_dir / f.name).write_bytes(raw)
-        new_names.append(f.name)
+        clean_name = _sanitize_filename(f.name)
+        (tmp_dir / clean_name).write_bytes(raw)
+        new_names.append(clean_name)
 
     was_empty_before_load = st.session_state.df_user_music_temp.empty
 

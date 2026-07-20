@@ -2,6 +2,11 @@
 MusicAI — Analyse & Classification de Genre Musical
 Streamlit app : sélection base GTZAN, upload audio, prédiction SVM + CNN,
 recommandations PCA et visualisations waveform / spectrogramme.
+update of 18 juillet 26 
+update des formats des spectro**.csv pour matcher avec train_CNN
+formats FLAC acceptés 
+
+en attente : un seul bouton load
 """
 # developped in streamlit==1.58.0
 # to launch the streamlit in local : 
@@ -75,10 +80,10 @@ M_DISPLAY_ROWS  = 12                          # nb de lignes affichées dans lis
 TIME_THRESHOLD  = 15                          # début du segment analysé (s)
 TIME_SEGMENT    = 30                          # durée du segment analysé (s)
 MUSIC_USER_PREFIX      = "MUSIC_USER/"                       # préfixe S3 des musiques taguées (dans le bucket existant)
-MUSIC_FILES_PREFIX     = MUSIC_USER_PREFIX + "music_files/"
 SPECTRO_USER_PREFIX    = MUSIC_USER_PREFIX + "spectrograms/"  # PNG harmo/percu (CNN)
 FEATURES_USER_PREFIX   = MUSIC_USER_PREFIX + "features/"      # 1 CSV features par session
 SPECTRO_CSV_PREFIX     = MUSIC_USER_PREFIX + "spectro/"       # 1 CSV catalogue spectro par session
+MUSIC_FILES_PREFIX     = MUSIC_USER_PREFIX + "music_files/"
 FEATURES_USER_MERGED_CSV = MUSIC_USER_PREFIX + "features_music_user.csv"  # fusion de tous les CSV /features
 SPECTRO_USER_MERGED_CSV  = MUSIC_USER_PREFIX + "spectro_music_user.csv"   # fusion de tous les CSV /spectro
 BATCH_MAX_WORKERS = 4   # nb de fichiers analysés en parallèle (threads I/O-bound : appels API)
@@ -948,10 +953,7 @@ with head_col2:
         key="user_name",
         placeholder="please write your user name",
         help="please write your user name",
-        disabled=st.session_state.session_id is not None,
     )
-    if st.session_state.session_id is not None:
-        st.caption("Session en cours — nom verrouillé jusqu'à rechargement de la page.")
 st.divider()
 _render_admin_sidebar()
 
@@ -988,6 +990,7 @@ _defaults = {
     "spectro_user": pd.DataFrame(columns=["name", "spectro_percu", "spectro_harmo"]),
     "batch_temp_dir": None,
     "load_locked": False,
+    "show_uploader": False,
     "active_row_idx": 0,
     "batch_audio_cache": {},
     "batch_features_cache": {},
@@ -1046,7 +1049,7 @@ def _ctrl_db():
             st.error(f"Fichier introuvable : {s3_key}")
 
     if st.session_state.db_audio_bytes:
-        st.audio(st.session_state.db_audio_bytes, format="audio/wav", autoplay=True)
+        st.audio(st.session_state.db_audio_bytes, format="audio/wav")
 
 
 # RANGÉE HAUTE COL 2 — Batch load / up / down / play / save + liste_music
@@ -1119,36 +1122,9 @@ def _ctrl_my():
 
     b_load, b_up, b_down, b_play, b_save = st.columns(5)
     with b_load:
-        st.markdown(f"""
-            <label class="musicai-load-btn{' disabled' if load_disabled else ''}" title="Load">📥</label>
-            <style>
-            .musicai-load-btn {{
-                display:flex; align-items:center; justify-content:center;
-                width:100%; height:2.5rem; border-radius:0.5rem;
-                border:1px solid rgba(49,51,63,0.2); cursor:pointer;
-                font-size:1.1rem; background:#fff; margin-top:2px;
-            }}
-            .musicai-load-btn.disabled {{ opacity:0.4; cursor:not-allowed; pointer-events:none; }}
-            .musicai-load-btn:hover {{ border-color:#ff4b4b; }}
-            /* uploader natif masqué visuellement mais toujours monté dans le DOM
-               (nécessaire pour que le clic JS puisse ouvrir le sélecteur de fichiers OS) */
-            .st-key-batch_uploader_zone [data-testid="stFileUploaderDropzoneInstructions"],
-            .st-key-batch_uploader_zone small {{ display:none !important; }}
-            .st-key-batch_uploader_zone [data-testid="stFileUploaderDropzone"] {{
-                border:none !important; padding:0 !important; background:transparent !important;
-                min-height:0 !important; height:0 !important; overflow:hidden !important;
-            }}
-            </style>
-            <script>
-            (function() {{
-                const btn = document.currentScript.previousElementSibling.previousElementSibling;
-                btn.addEventListener('click', function() {{
-                    const zone = document.querySelector('.st-key-batch_uploader_zone [data-testid="stFileUploaderDropzone"] button');
-                    if (zone) zone.click();
-                }});
-            }})();
-            </script>
-        """, unsafe_allow_html=True)
+        if st.button("📥", key="btn_load", disabled=load_disabled, width='stretch',
+                      help="Load"):
+            st.session_state.show_uploader = True
     with b_up:
         if st.button("⬆", key="btn_up", disabled=not can_up, width='stretch', help="Up"):
             st.session_state.active_row_idx -= 1
@@ -1164,18 +1140,16 @@ def _ctrl_my():
         if st.button("💾", key="btn_save", disabled=not can_save, width='stretch', help="Save"):
             _save_tagged_rows()
 
-    # L'uploader reste TOUJOURS monté (masqué en CSS ci-dessus) : c'est ce qui permet
-    # au clic sur 📥 d'ouvrir directement le sélecteur de fichiers OS, sans rerun intermédiaire.
-    uploader_zone = st.container(key="batch_uploader_zone")
-    with uploader_zone:
+    if st.session_state.show_uploader:
         k = _remaining_slots()
         files = st.file_uploader(
             f"Sélectionnez jusqu'à {k} fichier(s) audio (.wav / .mp3 / .ogg / .flac)",
             type=["wav", "mp3", "ogg", "flac"], accept_multiple_files=True, key="batch_uploader",
         )
-    if files:
-        _process_loaded_files(files[:k])
-        st.rerun()
+        if files:
+            _process_loaded_files(files[:k])
+            st.session_state.show_uploader = False
+            st.rerun()
 
     _render_liste_music()
 
@@ -1266,7 +1240,7 @@ def _ctrl_rec():
 
     _cur_ab = st.session_state.db_rec_audio_bytes if source_choice == "database choice" else st.session_state.my_rec_audio_bytes
     if _cur_ab:
-        st.audio(_cur_ab, format="audio/wav", autoplay=True)
+        st.audio(_cur_ab, format="audio/wav")
 
 
 # Appels rangée haute
