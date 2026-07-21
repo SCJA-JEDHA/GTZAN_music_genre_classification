@@ -75,7 +75,7 @@ LIST_GENRES = [
     'blues','classical','country','disco','hiphop',
     'jazz','metal','pop','reggae','rock'
 ]
-
+# commentaire  
 
 # CONFIG — MODE BATCH (colonne 2)
 N_MUSIC_FILES   = 20                          # nb max de fichiers en file d'attente
