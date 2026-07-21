@@ -76,6 +76,7 @@ LIST_GENRES = [
     'jazz','metal','pop','reggae','rock'
 ]
 
+
 # CONFIG — MODE BATCH (colonne 2)
 N_MUSIC_FILES   = 20                          # nb max de fichiers en file d'attente
 M_DISPLAY_ROWS  = 12                          # nb de lignes affichées dans liste_music

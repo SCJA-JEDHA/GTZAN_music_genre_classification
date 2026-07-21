@@ -141,7 +141,7 @@ default_args = {
 }
 
 with DAG(
-    dag_id="01_etl_csv_musicAI",
+    dag_id="01b_etl_csv_musicAI2",
     default_args=default_args,
     schedule="*/5 * * * *",
     start_date=datetime(2026, 7, 19),
