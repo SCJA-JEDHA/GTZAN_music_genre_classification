@@ -76,6 +76,20 @@ docker compose up
 (ajoutez `-d` pour lancer en arrière-plan)
 
 ### notes : s'il faut rebuild le docker-compose, 
+par exemple pour des problemes de conteneur postgres deja existant, 
+08:04:06.337 UTC [5731] FATAL:  password authentication failed for user "airflow"
+postgres-1               
+en preliminaire :
+C'est un classique : Postgres n'initialise les identifiants qu'une seule fois, à la toute première création du volume. Si postgres-db-volume existe déjà d'un lancement précédent (même avant que tu changes de Dockerfile ou ajoutes init-mlflow-db.sql), les variables POSTGRES_USER/POSTGRES_PASSWORD du docker-compose.yaml sont silencieusement ignorées au démarrage suivant — Postgres utilise ce qui est déjà stocké dans le volume, pas ce que tu as écrit dans le fichier.
+
+Vérifier que c'est bien ça :
+```powershell
+docker volume ls | Select-String "postgres"
+docker compose down
+docker volume inspect <nom_du_volume_postgres>
+```
+
+
 #### 1. Arrêter la stack actuelle
 docker compose down -v
 ⚠️ -v supprime le volume Postgres (postgres-db-volume) — à utiliser seulement si tu veux repartir sur une base Airflow vierge, pas juste appliquer un changement de dépendances.

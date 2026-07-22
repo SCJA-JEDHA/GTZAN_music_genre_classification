@@ -14,8 +14,8 @@ from airflow.operators.python import PythonOperator
 S3_BUCKET = os.getenv("AWS_BUCKET")
 INPUT_PREFIX_FEATURES = "MUSIC_USER/features_test"
 INPUT_PREFIX_SPECTRO = "MUSIC_USER/spectro_test"
-OUTPUT_KEY_FEATURES = "MUSIC_USER/output/concatenated_features.csv"
-OUTPUT_KEY_SPECTRO = "MUSIC_USER/output/concatenated_spectro.csv"
+OUTPUT_KEY_FEATURES = "MUSIC_USER/output/concatenated_features2.csv"
+OUTPUT_KEY_SPECTRO = "MUSIC_USER/output/concatenated_spectro2.csv"
 
 # Ne traiter que les fichiers déposés à partir de cette date
 PROCESS_SINCE = datetime(2026, 7, 19, tzinfo=timezone.utc)
